@@ -264,8 +264,6 @@ func (b *Bot) handleSlashCommand(w http.ResponseWriter, r *http.Request) {
 		}
 	case DeployAPICmd:
 		response = b.githubHandler.HandleDeploy(command, text, userID, channelID)
-	case UpdatePolkadotToLatestCmd:
-		response = b.githubHandler.HandleUpdateChain(text, userID)
 	case UpdateNetworkCmd:
 		response = b.githubHandler.HandleUpdateNetwork(text, userID)
 	default:
