@@ -20,7 +20,6 @@ import (
 
 const (
 	DeployAPICmd              = "/deploy-api"
-	DeployProxyCmd            = "/deploy-proxy"
 	UpdatePolkadotToLatestCmd = "/update-chain"
 	UpdateNetworkCmd          = "/update-network"
 
@@ -123,8 +122,6 @@ func (h *GitHubDeployHandler) HandleDeploy(command, text, userID, channelID stri
 	switch command {
 	case DeployAPICmd:
 		service = "api"
-	case DeployProxyCmd:
-		service = "proxy"
 	}
 
 	h.bot.logger.Info("deployment requested",
