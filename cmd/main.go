@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,17 +14,12 @@ import (
 	"time"
 
 	"github.com/blockops-sh/ponos/config"
-	"github.com/go-co-op/gocron/v2"
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
-	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect/mysqldialect"
 )
 
 type Bot struct {
 	client        *slack.Client
-	db            *sql.DB
 	config        *config.Config
 	logger        *slog.Logger
 	githubHandler *GitHubDeployHandler
@@ -41,34 +35,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	sqldb, err := sql.Open("mysql", cfg.MySQLDSN)
-	if err != nil {
-		panic(err)
-	}
-
-	db := bun.NewDB(sqldb, mysqldialect.New())
-
-	if err := db.Ping(); err != nil {
-		logger.Error("failed to ping database", "error", err)
-		os.Exit(1)
-	}
-
-	scheduler, err := gocron.NewScheduler()
-	if err != nil {
-		panic(err.Error())
-	}
-
 	api := slack.New(cfg.SlackToken)
-
-	if err := createScheduleJobs(scheduler, db, logger, api); err != nil {
-		panic(err)
-	}
-
-	scheduler.Start()
 
 	bot := &Bot{
 		client: api,
-		// db:     db,
 		config: cfg,
 		logger: logger,
 	}
@@ -97,9 +67,6 @@ func main() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
 	<-stop
-	_ = db.Close()
-	_ = scheduler.Shutdown()
-
 	logger.Info("shutting down server")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
