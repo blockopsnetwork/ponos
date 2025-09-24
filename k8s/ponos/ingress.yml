@@ -1,0 +1,21 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ponos-ingress
+  namespace: ponos
+  labels:
+    name: ponos
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ponos.blockops.network
+      http:
+        paths:
+          - pathType: Prefix
+            path: '/'
+            backend:
+              service:
+                name: ponos
+                port:
+                  number: 8000
