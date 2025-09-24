@@ -19,14 +19,12 @@ import (
 )
 
 const (
-	DeployDashboardCmd        = "/deploy-dashboard"
 	DeployAPICmd              = "/deploy-api"
 	DeployProxyCmd            = "/deploy-proxy"
 	UpdatePolkadotToLatestCmd = "/update-chain"
 	UpdateNetworkCmd          = "/update-network"
 
-	DashboardRepo = "blockops-sh/user-dashboard-client-v2"
-	APIRepo       = "blockops-sh/api-core-service"
+	APIRepo = "blockops-sh/api-core-service"
 )
 
 type RepoConfig struct {
@@ -52,11 +50,6 @@ func NewGitHubDeployHandler(bot *Bot) *GitHubDeployHandler {
 	return &GitHubDeployHandler{
 		bot: bot,
 		repoConfigs: map[string]RepoConfig{
-			"dashboard": {
-				Name:          DashboardRepo,
-				DefaultBranch: "dev",
-				SourceBranch:  "staging",
-			},
 			"api": {
 				Name:          APIRepo,
 				DefaultBranch: "dev",
@@ -128,8 +121,6 @@ func (h *GitHubDeployHandler) HandleDeploy(command, text, userID, channelID stri
 
 	var service string
 	switch command {
-	case DeployDashboardCmd:
-		service = "dashboard"
 	case DeployAPICmd:
 		service = "api"
 	case DeployProxyCmd:

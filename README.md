@@ -5,7 +5,6 @@ Ponos is a Slack bot that does a bunch of automations for Blockops.
 ## Features
 
 - [x] Automated deployments via Slack slash commands with Github apps <https://github.com/apps/blockops-deploy-bot>
-  - [x] Dashboard
   - [x] Backend
   - [ ] Blockproxy
 - [ ] Allow us retry deployment for specific projects in mission control if it fails instead of waiting for them to reach out to us if we have fixed the issue
@@ -50,7 +49,6 @@ docker run -d \
 
 The bot responds to the following slash commands in Slack:
 
-- `/deploy-dashboard` - Deploy the dashboard service
 - `/deploy-api` - Deploy the API service
 
 more soon
