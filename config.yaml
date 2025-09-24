@@ -1,0 +1,12 @@
+version: 1
+
+projects:
+  - network: polkadot
+    owner: blockops-sh
+    name: blockops-sre
+    branch: main
+    paths:
+      - k8s/assethub-polkadot-replica/sts.yml
+      - k8s/blockops-polkadot-archive/statefulset.yaml
+      - k8s/blockops-assethub-polkadot/sts.yml
+

@@ -1,0 +1,19 @@
+version: '3.9'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ponos   
+      MYSQL_DATABASE: ponos                
+      MYSQL_USER: ponos                  
+      MYSQL_PASSWORD: ponos          
+    ports:
+      - "3306:3306"   
+    volumes:
+      - mysql_data:/var/lib/mysql  
+
+volumes:
+  mysql_data:

@@ -1,0 +1,70 @@
+version: "3"
+
+vars:
+  DEFAULT_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/ponos?parseTime=true
+  DEFAULT_PORT: "8700"
+  DEFAULT_GITHUB_APP_ID: "1328686"
+  DEFAULT_GITHUB_INSTALL_ID: "68542547"
+  DEFAULT_GITHUB_PEM_KEY: "/Users/lanreadelowo/Downloads/blockops-deploy-bot.2025-05-27.pem"
+  DEFAULT_SLACK_TOKEN: "xoxb-1215917881797-"
+  DEFAULT_SLACK_SIGNING_SECRET: "f37f659150"
+
+tasks:
+  build:
+    desc: Build the application
+    cmds:
+      - go build -o bin/ponos ./cmd/main.go
+
+  run:
+    desc: Run the application with default configs if not set
+    cmds:
+      - task: ensure-env
+      - go run ./cmd/main.go
+
+  ensure-env:
+    internal: true
+    cmds:
+      - |
+        export MYSQL_DSN=${MYSQL_DSN:-{{.DEFAULT_MYSQL_DSN}}}
+        export PORT=${PORT:-{{.DEFAULT_PORT}}}
+        export GITHUB_APP_ID=${GITHUB_APP_ID:-{{.DEFAULT_GITHUB_APP_ID}}}
+        export GITHUB_INSTALL_ID=${GITHUB_INSTALLATION_ID:-{{.DEFAULT_GITHUB_INSTALL_ID}}}
+        export GITHUB_PEM_KEY=${GITHUB_PEM_KEY:-{{.DEFAULT_GITHUB_PEM_KEY}}}
+        export SLACK_TOKEN=${SLACK_TOKEN:-{{.DEFAULT_SLACK_TOKEN}}}
+        export SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-{{.DEFAULT_SLACK_SIGNING_SECRET}}}
+        export SLACK_APP_ID=${SLACK_APP_ID:-{{.DEFAULT_SLACK_APP_ID}}}
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test -v ./...
+
+  dev:
+    desc: Run the application in development mode
+    env:
+      MYSQL_DSN: "{{.DEFAULT_MYSQL_DSN}}"
+      PORT: "{{.DEFAULT_PORT}}"
+      GITHUB_APP_ID: "{{.DEFAULT_GITHUB_APP_ID}}"
+      GITHUB_INSTALL_ID: "{{.DEFAULT_GITHUB_INSTALL_ID}}"
+      GITHUB_PEM_KEY: "{{.DEFAULT_GITHUB_PEM_KEY}}"
+      SLACK_TOKEN: "{{.DEFAULT_SLACK_TOKEN}}"
+      SLACK_SIGNING_SECRET: "{{.DEFAULT_SLACK_SIGNING_SECRET}}"
+    cmds:
+      - go run ./cmd/*.go
+
+  docker-build:
+    desc: Build the Docker image
+    cmds:
+      - docker build -t ponos:latest .
+
+  docker-run:
+    desc: Run the Docker container
+    cmds:
+      - |
+        docker run -p 8080:8080 \
+          -e MYSQL_DSN={{.DEFAULT_MYSQL_DSN}} \
+          -e SLACK_TOKEN={{.DEFAULT_SLACK_TOKEN}} \
+          -e SLACK_SIGNING_SECRET={{.DEFAULT_SLACK_SIGNING_SECRET}} \
+          -e SLACK_APP_ID={{.DEFAULT_SLACK_APP_ID}} \
+          -e PORT=8080 \
+          ponos:latest
