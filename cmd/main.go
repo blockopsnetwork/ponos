@@ -262,10 +262,8 @@ func (b *Bot) handleSlashCommand(w http.ResponseWriter, r *http.Request) {
 			ResponseType: "in_channel",
 			Text:         fmt.Sprintf("Hello <@%s>! You said: %s", userID, text),
 		}
-	case DeployDashboardCmd, DeployAPICmd, DeployProxyCmd:
+	case DeployAPICmd:
 		response = b.githubHandler.HandleDeploy(command, text, userID, channelID)
-	case UpdatePolkadotToLatestCmd:
-		response = b.githubHandler.HandleUpdateChain(text, userID)
 	case UpdateNetworkCmd:
 		response = b.githubHandler.HandleUpdateNetwork(text, userID)
 	default:
