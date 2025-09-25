@@ -635,6 +635,12 @@ func (h *GitHubDeployHandler) createBranchAndPR(ctx context.Context, client *git
 }
 
 func extractImageReposFromYAML(yamlContent string) []string {
+	mainRepos := extractMainApplicationRepos(yamlContent)
+	if len(mainRepos) > 0 {
+		return mainRepos
+	}
+	
+	// Fallback to extracting all repos if we can't identify main containers
 	var root yaml.Node
 	err := yaml.Unmarshal([]byte(yamlContent), &root)
 	if err != nil {
@@ -671,6 +677,174 @@ func extractImageReposFromYAML(yamlContent string) []string {
 		walk(&root)
 	}
 	return repos
+}
+
+func extractMainApplicationRepos(yamlContent string) []string {
+	var root yaml.Node
+	err := yaml.Unmarshal([]byte(yamlContent), &root)
+	if err != nil {
+		return nil
+	}
+	
+	type containerInfo struct {
+		name            string
+		image           string
+		repo            string
+		isMainContainer bool
+	}
+	
+	var containers []containerInfo
+	var currentContainerName string
+	
+	var walk func(n *yaml.Node, depth int)
+	walk = func(n *yaml.Node, depth int) {
+		if n == nil {
+			return
+		}
+		
+		switch n.Kind {
+		case yaml.MappingNode:
+			for i := 0; i < len(n.Content)-1; i += 2 {
+				key := n.Content[i]
+				val := n.Content[i+1]
+				
+				// Track container names
+				if key.Value == "name" && val.Kind == yaml.ScalarNode {
+					currentContainerName = val.Value
+				}
+				
+				// Extract image information - handle both formats
+				if key.Value == "image" {
+					if val.Kind == yaml.ScalarNode {
+						// Format: image: parity/polkadot:tag
+						img := val.Value
+						if idx := strings.Index(img, ":"); idx > 0 {
+							repo := img[:idx]
+							
+							container := containerInfo{
+								name:            currentContainerName,
+								image:           img,
+								repo:            repo,
+								isMainContainer: isMainContainer(currentContainerName, repo),
+							}
+							containers = append(containers, container)
+						}
+					} else if val.Kind == yaml.MappingNode {
+						// Format: image: { repo: parity/polkadot, tag: stable2506-2 }
+						var repo, tag string
+						for j := 0; j < len(val.Content)-1; j += 2 {
+							subKey := val.Content[j]
+							subVal := val.Content[j+1]
+							if subKey.Value == "repo" && subVal.Kind == yaml.ScalarNode {
+								repo = subVal.Value
+							} else if subKey.Value == "tag" && subVal.Kind == yaml.ScalarNode {
+								tag = subVal.Value
+							}
+						}
+						
+						if repo != "" {
+							img := repo
+							if tag != "" {
+								img = repo + ":" + tag
+							}
+							
+							container := containerInfo{
+								name:            currentContainerName,
+								image:           img,
+								repo:            repo,
+								isMainContainer: isMainContainer(currentContainerName, repo),
+							}
+							containers = append(containers, container)
+						}
+					}
+				}
+				
+				walk(val, depth+1)
+			}
+		case yaml.SequenceNode:
+			for _, item := range n.Content {
+				walk(item, depth+1)
+			}
+		}
+	}
+	
+	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		walk(root.Content[0], 0)
+	} else {
+		walk(&root, 0)
+	}
+	
+	// Filter to only main application containers
+	var mainRepos []string
+	for _, container := range containers {
+		if container.isMainContainer {
+			// Avoid duplicates
+			found := false
+			for _, existing := range mainRepos {
+				if existing == container.repo {
+					found = true
+					break
+				}
+			}
+			if !found {
+				mainRepos = append(mainRepos, container.repo)
+			}
+		}
+	}
+	
+	return mainRepos
+}
+
+func isMainContainer(containerName, imageRepo string) bool {
+	containerName = strings.ToLower(containerName)
+	imageRepo = strings.ToLower(imageRepo)
+	
+	// Known blockchain node repositories that should be updated
+	knownMainRepos := map[string]bool{
+		"parity/polkadot":     true,
+		"parity/kusama":       true,
+		"paritytech/polkadot": true,
+		"paritytech/kusama":   true,
+		"ethereum/client-go":  true,
+		"hyperledger/fabric":  true,
+	}
+	
+	if knownMainRepos[imageRepo] {
+		return true
+	}
+	
+	// Sidecar/utility containers that should NOT be updated
+	sidecarPatterns := []string{
+		"filebeat", "fluentd", "logstash", "fluent-bit",
+		"prometheus", "grafana", "jaeger", "zipkin",
+		"nginx", "envoy", "istio", "linkerd",
+		"vault", "consul", "redis", "memcached",
+		"postgres", "mysql", "mongodb",
+		"busybox", "alpine", "ubuntu", "centos",
+		"pause", "k8s.gcr.io/pause",
+		"cloudflare", "certbot",
+	}
+	
+	for _, pattern := range sidecarPatterns {
+		if strings.Contains(imageRepo, pattern) || strings.Contains(containerName, pattern) {
+			return false
+		}
+	}
+	
+	// Check if container name suggests it's a main application
+	mainContainerPatterns := []string{
+		"polkadot", "kusama", "node", "validator", "archive",
+		"ethereum", "geth", "consensus", "execution",
+	}
+	
+	for _, pattern := range mainContainerPatterns {
+		if strings.Contains(containerName, pattern) || strings.Contains(imageRepo, pattern) {
+			return true
+		}
+	}
+	
+	// Default to false for safety - only update containers we're confident about
+	return false
 }
 
 func updateAllImageTagsYAML(yamlContent string, repoToTag map[string]string) (string, bool, error) {
