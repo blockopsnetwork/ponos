@@ -120,6 +120,16 @@ func (wh *WebhookHandler) handleReleasesWebhook(w http.ResponseWriter, r *http.R
 				"update_strategy", decision.UpdateStrategy,
 				"detected_networks", decision.DetectedNetworks,
 				"reasoning", decision.Reasoning)
+			
+			// Act on the AI agent decision
+			if decision.ShouldUpdate && decision.UpdateStrategy == "create_pr" {
+				wh.bot.logger.Info("Creating PR based on AI agent decision")
+				go wh.createPRFromAgentDecision(payload, decision)
+			} else {
+				wh.bot.logger.Info("Skipping PR creation", 
+					"should_update", decision.ShouldUpdate,
+					"update_strategy", decision.UpdateStrategy)
+			}
 		}
 	} else {
 		wh.bot.logger.Info("AI agent not available, skipping processing")
