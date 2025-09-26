@@ -144,3 +144,56 @@ Provide detailed analysis to help node operators make an informed decision about
 
 	return prompt
 }
+
+// Slack block utility functions
+func createStatusBlock(icon, title string) slack.Block {
+	return slack.NewSectionBlock(
+		slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("%s *%s*", icon, title), false, false),
+		nil, nil,
+	)
+}
+
+func createInfoBlock(text string) slack.Block {
+	return slack.NewSectionBlock(
+		slack.NewTextBlockObject(slack.MarkdownType, text, false, false),
+		nil, nil,
+	)
+}
+
+func createProgressBlock() slack.Block {
+	return slack.NewSectionBlock(
+		slack.NewTextBlockObject(slack.MarkdownType, "_I'll keep you updated on the progress._", false, false),
+		nil, nil,
+	)
+}
+
+func createDeploymentStartBlocks(service, branch, environment, userID string) []slack.Block {
+	return []slack.Block{
+		createStatusBlock(":rocket:", "Deployment started!"),
+		createInfoBlock(fmt.Sprintf("*Service:* %s\n*Branch:* %s\n*Environment:* %s\n*Requested by:* <@%s>",
+			service, branch, environment, userID)),
+		createProgressBlock(),
+	}
+}
+
+func createUpdateStartBlocks(chain, userID string) []slack.Block {
+	return []slack.Block{
+		createStatusBlock(":rocket:", "Polkadot update started!"),
+		createInfoBlock(fmt.Sprintf("*Chain:* %s\n*Requested by:* <@%s>", chain, userID)),
+		createProgressBlock(),
+	}
+}
+
+func createErrorBlocks(title, message string) []slack.Block {
+	return []slack.Block{
+		createStatusBlock(":x:", title),
+		createInfoBlock(message),
+	}
+}
+
+func createSuccessBlocks(title, details string) []slack.Block {
+	return []slack.Block{
+		createStatusBlock(":white_check_mark:", title),
+		createInfoBlock(details),
+	}
+}
