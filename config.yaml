@@ -15,6 +15,13 @@ projects:
     paths:
       - k8s/argocd-deployments/manifests/fullnodes/polkadot-kusama-rpc.yml
 
+  - network: polkadot
+    owner: blockops-sh
+    name: blockops-sre
+    branch: main 
+    paths:
+      - k8s/argocd-deployments/manifests/fullnodes/polkadot-archive-sec-test.yml
+
 
   
 
