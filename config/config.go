@@ -17,6 +17,10 @@ type Config struct {
 	SlackToken      string `envconfig:"SLACK_TOKEN" default:""`
 	SlackSigningKey string `envconfig:"SLACK_SIGNING_SECRET" default:""`
 
+	// Slack channels for notifications
+	UsersReportChannel   string `envconfig:"SLACK_USERS_CHANNEL" default:"C05TT7LULP8"`
+	SupportReportChannel string `envconfig:"SLACK_SUPPORT_CHANNEL" default:"C06GTAC99T9"`
+
 	Port string `envconfig:"PORT" default:"8080"`
 }
 
