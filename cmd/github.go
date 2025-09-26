@@ -19,10 +19,14 @@ import (
 )
 
 const (
-	DeployAPICmd     = "/deploy-api"
-	UpdateNetworkCmd = "/update-network"
+	DeployDashboardCmd        = "/deploy-dashboard"
+	DeployAPICmd              = "/deploy-api" 
+	DeployProxyCmd            = "/deploy-proxy"
+	UpdatePolkadotToLatestCmd = "/update-chain"
+	UpdateNetworkCmd          = "/update-network"
 
-	APIRepo = "blockops-sh/api-core-service"
+	DashboardRepo = "blockops-sh/user-dashboard-client-v2"
+	APIRepo       = "blockops-sh/api-core-service"
 )
 
 type RepoConfig struct {
@@ -39,6 +43,43 @@ type GitHubDeployHandler struct {
 	installID   int64  // GitHub App Installation ID
 }
 
+type NetworkUpdateRequest struct {
+	DetectedNetworks []string
+	ReleaseTag       string
+	CommitMessage    string
+	PRTitle          string
+	PRBody           string
+	BranchPrefix     string
+}
+
+type NetworkUpdateResult struct {
+	PRUrl         string
+	CommitURL     string
+	UpdatedFiles  []string
+	ImageUpgrades []imageUpgrade
+	Success       bool
+	Error         error
+}
+
+type imageUpgrade struct {
+	file   string
+	oldImg string
+	newImg string
+}
+
+type fileCommitData struct {
+	owner   string
+	repo    string
+	path    string
+	sha     string
+	newYAML string
+}
+
+type dockerTagResult struct {
+	ImageToTag map[string]string
+	Error      error
+}
+
 func NewGitHubDeployHandler(bot *Bot) *GitHubDeployHandler {
 	pemKey, err := os.ReadFile(bot.config.GitHubPEMKey)
 	if err != nil {
@@ -48,6 +89,11 @@ func NewGitHubDeployHandler(bot *Bot) *GitHubDeployHandler {
 	return &GitHubDeployHandler{
 		bot: bot,
 		repoConfigs: map[string]RepoConfig{
+			"dashboard": {
+				Name:          DashboardRepo,
+				DefaultBranch: "dev",
+				SourceBranch:  "staging",
+			},
 			"api": {
 				Name:          APIRepo,
 				DefaultBranch: "dev",
@@ -119,15 +165,15 @@ func (h *GitHubDeployHandler) HandleDeploy(command, text, userID, channelID stri
 
 	var service string
 	switch command {
+	case DeployDashboardCmd:
+		service = "dashboard"
 	case DeployAPICmd:
 		service = "api"
+	case DeployProxyCmd:
+		service = "proxy"
 	}
 
-	h.bot.logger.Info("deployment requested",
-		"service", service,
-		"branch", branch,
-		"environment", environment,
-		"user", userID)
+	// Deployment initiated
 
 	go h.startDeployment(service, branch, environment, userID, channelID)
 
@@ -255,7 +301,68 @@ func (h *GitHubDeployHandler) notifyError(channelID, message string) {
 	}
 }
 
+func (h *GitHubDeployHandler) HandleUpdateChain(text, userID string) *SlashCommandResponse {
+	params := strings.Fields(text)
+	if len(params) != 1 {
+		return &SlashCommandResponse{
+			ResponseType: "ephemeral",
+			Text:         "Usage: /update-chain <chain>. Only 'polkadot' is supported.",
+		}
+	}
+	chain := strings.ToLower(params[0])
+	if chain != "polkadot" {
+		go h.notifyUpdateChainError("rpc-updates", chain, userID)
+		return &SlashCommandResponse{
+			ResponseType: "ephemeral",
+			Text:         "Only 'polkadot' is supported for now.",
+		}
+	}
 
+	go h.startPolkadotUpdate(userID)
+	return &SlashCommandResponse{
+		ResponseType: "in_channel",
+		Blocks: []slack.Block{
+			slack.NewSectionBlock(
+				slack.NewTextBlockObject(slack.MarkdownType, ":rocket: *Polkadot update started!*", false, false),
+				nil,
+				nil,
+			),
+			slack.NewSectionBlock(
+				slack.NewTextBlockObject(slack.MarkdownType,
+					fmt.Sprintf("*Chain:* %s\n*Requested by:* <@%s>", chain, userID),
+					false, false),
+				nil,
+				nil,
+			),
+			slack.NewSectionBlock(
+				slack.NewTextBlockObject(slack.MarkdownType, "_I'll keep you updated on the progress._", false, false),
+				nil,
+				nil,
+			),
+		},
+	}
+}
+
+func (h *GitHubDeployHandler) notifyUpdateChainError(channelID, chain, userID string) {
+	blocks := []slack.Block{
+		slack.NewSectionBlock(
+			slack.NewTextBlockObject(slack.MarkdownType, ":x: *Update failed*", false, false),
+			nil,
+			nil,
+		),
+		slack.NewSectionBlock(
+			slack.NewTextBlockObject(slack.MarkdownType,
+				fmt.Sprintf("Chain '%s' is not supported. Only 'polkadot' is allowed.\nRequested by: <@%s>", chain, userID),
+				false, false),
+			nil,
+			nil,
+		),
+	}
+	_, _, err := h.bot.client.PostMessage(channelID, slack.MsgOptionBlocks(blocks...))
+	if err != nil {
+		h.bot.logger.Error("failed to send update chain error message", "error", err, "channel", channelID, "chain", chain)
+	}
+}
 
 func (h *GitHubDeployHandler) HandleUpdateNetwork(text, userID string) *SlashCommandResponse {
 	params := strings.Fields(text)
@@ -267,7 +374,7 @@ func (h *GitHubDeployHandler) HandleUpdateNetwork(text, userID string) *SlashCom
 	}
 	chain := strings.ToLower(params[0])
 	if chain != "polkadot" {
-		go h.notifyError("rpc-updates", fmt.Sprintf("Chain '%s' is not supported. Only 'polkadot' is allowed.\nRequested by: <@%s>", chain, userID))
+		go h.notifyUpdateChainError("rpc-updates", chain, userID)
 		return &SlashCommandResponse{
 			ResponseType: "ephemeral",
 			Text:         "Only 'polkadot' is supported for now.",
@@ -299,8 +406,7 @@ func (h *GitHubDeployHandler) HandleUpdateNetwork(text, userID string) *SlashCom
 	}
 }
 
-
-func (h *GitHubDeployHandler) startNetworkUpdate(userID string) {
+func (h *GitHubDeployHandler) startPolkadotUpdate(userID string) {
 	type dockerTag struct {
 		Name        string `json:"name"`
 		LastUpdated string `json:"last_updated"`
@@ -311,7 +417,6 @@ func (h *GitHubDeployHandler) startNetworkUpdate(userID string) {
 
 	projectConfig, err := config.LoadProjectConfig("config.yaml")
 	if err != nil {
-		h.bot.logger.Error("failed to load project config", "error", err)
 		return
 	}
 
@@ -342,10 +447,9 @@ func (h *GitHubDeployHandler) startNetworkUpdate(userID string) {
 		return
 	}
 
-	imageToTag := make(map[string]string)              // image repo -> latest stable tag
-	fileImages := make([][]string, len(filesToUpdate)) // images found in each file
+	imageToTag := make(map[string]string) // image repo -> latest stable tag
 
-	for i, f := range filesToUpdate {
+	for _, f := range filesToUpdate {
 		file, _, _, ferr := client.Repositories.GetContents(ctx, f.owner, f.repo, f.path, nil)
 		if ferr != nil || file == nil {
 			continue
@@ -355,7 +459,6 @@ func (h *GitHubDeployHandler) startNetworkUpdate(userID string) {
 			continue
 		}
 		images := extractImageReposFromYAML(content)
-		fileImages[i] = images
 		for _, img := range images {
 			imageToTag[img] = ""
 		}
@@ -396,19 +499,16 @@ func (h *GitHubDeployHandler) startNetworkUpdate(userID string) {
 		})
 		imageToTag[img] = stableTags[0].Name
 	}
-	
-	// FOR TESTING: Override all tags with "latest"
-	for repo := range imageToTag {
-		imageToTag[repo] = "latest"
-	}
 
 	blocks := []slack.Block{
 		slack.NewSectionBlock(
-			slack.NewTextBlockObject(slack.MarkdownType, ":white_check_mark: *Network update completed!*", false, false),
+			slack.NewTextBlockObject(slack.MarkdownType, ":white_check_mark: *Polkadot update completed!*", false, false),
 			nil,
 			nil,
 		),
 	}
+
+	var commitURL string
 
 	var filesToCommit []struct {
 		owner   string
@@ -535,7 +635,7 @@ func (h *GitHubDeployHandler) startNetworkUpdate(userID string) {
 		return
 	}
 
-	commitMsg := "ponos: update all network image tags to latest stable"
+	commitMsg := "ponos: update all polkadot image tags to latest stable"
 	now := time.Now()
 	author := &github.CommitAuthor{
 		Name:  github.Ptr("ponos-bot"),
@@ -557,29 +657,18 @@ func (h *GitHubDeployHandler) startNetworkUpdate(userID string) {
 		return
 	}
 
-	// Create PR using helper function
-	newBranch := fmt.Sprintf("ponos/update-network-%d", time.Now().Unix())
-	prTitle := "Update network image tags to latest stable"
-	prBody := fmt.Sprintf("Automated update of network Docker image tags to latest stable versions.\n\nCommit: %s", *commit.SHA)
-	
-	pullRequest, err := h.createBranchAndPR(ctx, client, owner, repo, commit, newBranch, prTitle, prBody)
+	ref.Object.SHA = commit.SHA
+	_, _, err = client.Git.UpdateRef(ctx, owner, repo, ref, false)
 	if err != nil {
-		h.bot.logger.Error("Failed to create branch and PR", "error", err)
-		h.notifyError("rpc-updates", "Failed to create branch and PR: "+err.Error())
+		h.bot.logger.Error("Failed to update branch ref", "error", err)
+		h.notifyError("rpc-updates", "Failed to update branch ref: "+err.Error())
 		return
 	}
 
+	commitURL = fmt.Sprintf("https://github.com/%s/%s/commit/%s", owner, repo, *commit.SHA)
 	blocks = append(blocks, slack.NewSectionBlock(
 		slack.NewTextBlockObject(slack.MarkdownType,
-			fmt.Sprintf("*Pull Request:* <%s|#%d>", *pullRequest.HTMLURL, *pullRequest.Number),
-			false, false),
-		nil, nil,
-	))
-	
-	blocks = append(blocks, slack.NewSectionBlock(
-		slack.NewTextBlockObject(slack.MarkdownType,
-			fmt.Sprintf("*Branch:* `%s`\n*Commit:* `%s`", newBranch, (*commit.SHA)[:7]),
-			false, false),
+			fmt.Sprintf(":link: *Commit:* %s", commitURL), false, false),
 		nil, nil,
 	))
 
@@ -596,9 +685,68 @@ func (h *GitHubDeployHandler) startNetworkUpdate(userID string) {
 	}
 	blocks = append(blocks, slack.NewSectionBlock(
 		slack.NewTextBlockObject(slack.MarkdownType,
+			":memo: *All K8s YAML preview files updated in a single commit*", false, false),
+		nil, nil,
+	))
+	_, _, err = h.bot.client.PostMessage("rpc-updates", slack.MsgOptionBlocks(blocks...))
+	if err != nil {
+		h.bot.logger.Error("failed to send polkadot update completion message", "error", err, "user", userID)
+	}
+}
+
+func (h *GitHubDeployHandler) startNetworkUpdate(userID string) {
+	ctx := context.Background()
+
+	req := NetworkUpdateRequest{
+		DetectedNetworks: []string{"polkadot"}, 
+		ReleaseTag:       "",                  
+		CommitMessage:    "ponos: update all network image tags to latest stable",
+		PRTitle:          "Update network image tags to latest stable",
+		PRBody:           "Automated update of network Docker image tags to latest stable versions.",
+		BranchPrefix:     "ponos/update-network",
+	}
+
+	result, err := h.updateNetworkImages(ctx, req)
+	if err != nil {
+		h.notifyError("rpc-updates", fmt.Sprintf("Network update failed: %v", err))
+		return
+	}
+
+	blocks := []slack.Block{
+		slack.NewSectionBlock(
+			slack.NewTextBlockObject(slack.MarkdownType, ":white_check_mark: *Network update completed!*", false, false),
+			nil, nil,
+		),
+		slack.NewSectionBlock(
+			slack.NewTextBlockObject(slack.MarkdownType,
+				fmt.Sprintf("*Pull Request:* <%s|View PR>", result.PRUrl), false, false),
+			nil, nil,
+		),
+		slack.NewSectionBlock(
+			slack.NewTextBlockObject(slack.MarkdownType,
+				fmt.Sprintf("*Commit:* <%s|View Commit>", result.CommitURL), false, false),
+			nil, nil,
+		),
+	}
+
+	if len(result.ImageUpgrades) > 0 {
+		var b strings.Builder
+		b.WriteString("*Image Upgrades:*")
+		for _, up := range result.ImageUpgrades {
+			b.WriteString(fmt.Sprintf("\n• `%s`: `%s` → `%s`", up.file, up.oldImg, up.newImg))
+		}
+		blocks = append(blocks, slack.NewSectionBlock(
+			slack.NewTextBlockObject(slack.MarkdownType, b.String(), false, false),
+			nil, nil,
+		))
+	}
+
+	blocks = append(blocks, slack.NewSectionBlock(
+		slack.NewTextBlockObject(slack.MarkdownType,
 			":memo: *All K8s YAML network files updated via pull request*", false, false),
 		nil, nil,
 	))
+
 	_, _, err = h.bot.client.PostMessage("rpc-updates", slack.MsgOptionBlocks(blocks...))
 	if err != nil {
 		h.bot.logger.Error("failed to send network update completion message", "error", err, "user", userID)
@@ -606,14 +754,14 @@ func (h *GitHubDeployHandler) startNetworkUpdate(userID string) {
 }
 
 func (h *GitHubDeployHandler) createBranchAndPR(ctx context.Context, client *github.Client, owner, repo string, commit *github.Commit, branchName, prTitle, prBody string) (*github.PullRequest, error) {
-	
+
 	newRef := &github.Reference{
 		Ref: github.Ptr("refs/heads/" + branchName),
 		Object: &github.GitObject{
 			SHA: commit.SHA,
 		},
 	}
-	
+
 	_, _, err := client.Git.CreateRef(ctx, owner, repo, newRef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create branch: %v", err)
@@ -637,8 +785,10 @@ func (h *GitHubDeployHandler) createBranchAndPR(ctx context.Context, client *git
 func extractImageReposFromYAML(yamlContent string) []string {
 	mainRepos := extractMainApplicationRepos(yamlContent)
 	if len(mainRepos) > 0 {
+		fmt.Printf("DEBUG: Found main repos: %v\n", mainRepos)
 		return mainRepos
 	}
+	fmt.Printf("DEBUG: No main repos found, falling back to all repos\n")
 	
 	// Fallback to extracting all repos if we can't identify main containers
 	var root yaml.Node
@@ -721,11 +871,13 @@ func extractMainApplicationRepos(yamlContent string) []string {
 						if idx := strings.Index(img, ":"); idx > 0 {
 							repo := img[:idx]
 							
+							isMain := isMainContainer(currentContainerName, repo)
+							fmt.Printf("DEBUG: Container '%s' with repo '%s' -> isMain: %v\n", currentContainerName, repo, isMain)
 							container := containerInfo{
 								name:            currentContainerName,
 								image:           img,
 								repo:            repo,
-								isMainContainer: isMainContainer(currentContainerName, repo),
+								isMainContainer: isMain,
 							}
 							containers = append(containers, container)
 						}
@@ -748,11 +900,13 @@ func extractMainApplicationRepos(yamlContent string) []string {
 								img = repo + ":" + tag
 							}
 							
+							isMain := isMainContainer(currentContainerName, repo)
+							fmt.Printf("DEBUG: Container '%s' with repo '%s' (mapped format) -> isMain: %v\n", currentContainerName, repo, isMain)
 							container := containerInfo{
 								name:            currentContainerName,
 								image:           img,
 								repo:            repo,
-								isMainContainer: isMainContainer(currentContainerName, repo),
+								isMainContainer: isMain,
 							}
 							containers = append(containers, container)
 						}
@@ -845,6 +999,310 @@ func isMainContainer(containerName, imageRepo string) bool {
 	
 	// Default to false for safety - only update containers we're confident about
 	return false
+}
+
+func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req NetworkUpdateRequest) (*NetworkUpdateResult, error) {
+	result := &NetworkUpdateResult{}
+
+	projectConfig, err := config.LoadProjectConfig("config.yaml")
+	if err != nil {
+		return result, fmt.Errorf("failed to load project config: %v", err)
+	}
+
+	var matchingProjects []config.Project
+	for _, project := range projectConfig.Projects {
+		for _, detectedNetwork := range req.DetectedNetworks {
+			if strings.EqualFold(project.Network, detectedNetwork) {
+				matchingProjects = append(matchingProjects, project)
+				break
+			}
+		}
+	}
+
+	if len(matchingProjects) == 0 {
+		return result, fmt.Errorf("no matching projects found for networks: %v", req.DetectedNetworks)
+	}
+
+	var filesToUpdate []struct {
+		owner string
+		repo  string
+		path  string
+	}
+
+	for _, project := range matchingProjects {
+		for _, path := range project.Paths {
+			filesToUpdate = append(filesToUpdate, struct {
+				owner string
+				repo  string
+				path  string
+			}{
+				owner: project.Owner,
+				repo:  project.Name,
+				path:  path,
+			})
+		}
+	}
+
+	client, err := h.createGitHubClient(ctx)
+	if err != nil {
+		return result, fmt.Errorf("failed to create GitHub client: %v", err)
+	}
+
+	imageToTag := make(map[string]string)
+
+	if req.ReleaseTag != "" {
+		for _, f := range filesToUpdate {
+			file, _, _, ferr := client.Repositories.GetContents(ctx, f.owner, f.repo, f.path, nil)
+			if ferr != nil || file == nil {
+				continue
+			}
+			content, cerr := file.GetContent()
+			if cerr != nil {
+				continue
+			}
+			images := extractImageReposFromYAML(content)
+			for _, img := range images {
+				imageToTag[img] = req.ReleaseTag
+			}
+		}
+	} else {
+		dockerResult, err := h.fetchLatestStableTags(ctx, client, filesToUpdate)
+		if err != nil {
+			return result, err
+		}
+		imageToTag = dockerResult.ImageToTag
+	}
+
+	filesToCommit, upgrades, err := h.prepareFileUpdates(ctx, client, filesToUpdate, imageToTag)
+	if err != nil {
+		return result, err
+	}
+
+	if len(filesToCommit) == 0 {
+		return result, fmt.Errorf("no files needed updating")
+	}
+
+	owner := filesToCommit[0].owner
+	repo := filesToCommit[0].repo
+
+	commit, err := h.createCommitFromFiles(ctx, client, owner, repo, "main", filesToCommit, req.CommitMessage)
+	if err != nil {
+		return result, err
+	}
+
+	branchName := fmt.Sprintf("%s-%d", req.BranchPrefix, time.Now().Unix())
+	pullRequest, err := h.createBranchAndPR(ctx, client, owner, repo, commit, branchName, req.PRTitle, req.PRBody)
+	if err != nil {
+		return result, err
+	}
+
+	result.PRUrl = *pullRequest.HTMLURL
+	result.CommitURL = fmt.Sprintf("https://github.com/%s/%s/commit/%s", owner, repo, *commit.SHA)
+	result.ImageUpgrades = upgrades
+	result.Success = true
+
+	for _, f := range filesToCommit {
+		result.UpdatedFiles = append(result.UpdatedFiles, f.path)
+	}
+
+	return result, nil
+}
+
+func (h *GitHubDeployHandler) fetchLatestStableTags(ctx context.Context, client *github.Client, filesToUpdate []struct{ owner, repo, path string }) (*dockerTagResult, error) {
+	imageToTag := make(map[string]string)
+
+	for _, f := range filesToUpdate {
+		file, _, _, ferr := client.Repositories.GetContents(ctx, f.owner, f.repo, f.path, nil)
+		if ferr != nil || file == nil {
+			continue
+		}
+		content, cerr := file.GetContent()
+		if cerr != nil {
+			continue
+		}
+		images := extractImageReposFromYAML(content)
+		for _, img := range images {
+			imageToTag[img] = ""
+		}
+	}
+
+	// get latest stable tags
+	type dockerTag struct {
+		Name        string `json:"name"`
+		LastUpdated string `json:"last_updated"`
+	}
+	type dockerTagsResp struct {
+		Results []dockerTag `json:"results"`
+	}
+
+	for img := range imageToTag {
+		parts := strings.Split(img, "/")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid image name: %s", img)
+		}
+
+		url := fmt.Sprintf("https://hub.docker.com/v2/repositories/%s/%s/tags?page_size=100", parts[0], parts[1])
+		resp, err := http.Get(url)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch Docker tags for %s: %v", img, err)
+		}
+
+		var tagsResp dockerTagsResp
+		if err := json.NewDecoder(resp.Body).Decode(&tagsResp); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to parse Docker tags JSON for %s: %v", img, err)
+		}
+		resp.Body.Close()
+
+		var stableTags []dockerTag
+		for _, tag := range tagsResp.Results {
+			if strings.HasPrefix(tag.Name, "stable") {
+				stableTags = append(stableTags, tag)
+			}
+		}
+
+		if len(stableTags) == 0 {
+			return nil, fmt.Errorf("no stable tags found for %s", img)
+		}
+
+		sort.Slice(stableTags, func(i, j int) bool {
+			return stableTags[i].LastUpdated > stableTags[j].LastUpdated
+		})
+
+		imageToTag[img] = stableTags[0].Name
+	}
+
+	return &dockerTagResult{ImageToTag: imageToTag}, nil
+}
+
+func (h *GitHubDeployHandler) prepareFileUpdates(ctx context.Context, client *github.Client, filesToUpdate []struct{ owner, repo, path string }, imageToTag map[string]string) ([]fileCommitData, []imageUpgrade, error) {
+	var filesToCommit []fileCommitData
+	var upgrades []imageUpgrade
+
+	for _, f := range filesToUpdate {
+		file, _, _, ferr := client.Repositories.GetContents(ctx, f.owner, f.repo, f.path, nil)
+		if ferr != nil || file == nil {
+			continue
+		}
+		content, cerr := file.GetContent()
+		if cerr != nil {
+			continue
+		}
+
+		var oldToNew []imageUpgrade
+
+		newYAML, updated, uerr := updateAllImageTagsYAML(content, imageToTag)
+		if uerr != nil || !updated {
+			continue
+		}
+
+		filesToCommit = append(filesToCommit, fileCommitData{
+			owner:   f.owner,
+			repo:    f.repo,
+			path:    f.path,
+			sha:     *file.SHA,
+			newYAML: newYAML,
+		})
+		upgrades = append(upgrades, oldToNew...)
+	}
+
+	return filesToCommit, upgrades, nil
+}
+
+func (h *GitHubDeployHandler) createCommitFromFiles(ctx context.Context, client *github.Client, owner, repo, branch string, filesToCommit []fileCommitData, commitMsg string) (*github.Commit, error) {
+	ref, _, err := client.Git.GetRef(ctx, owner, repo, "refs/heads/"+branch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get branch ref: %v", err)
+	}
+
+	baseCommit, _, err := client.Git.GetCommit(ctx, owner, repo, *ref.Object.SHA)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get base commit: %v", err)
+	}
+
+	var entries []*github.TreeEntry
+	for _, f := range filesToCommit {
+		blob, _, err := client.Git.CreateBlob(ctx, owner, repo, &github.Blob{
+			Content:  github.Ptr(f.newYAML),
+			Encoding: github.Ptr("utf-8"),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create blob for %s: %v", f.path, err)
+		}
+
+		entries = append(entries, &github.TreeEntry{
+			Path: github.Ptr(f.path),
+			Mode: github.Ptr("100644"),
+			Type: github.Ptr("blob"),
+			SHA:  blob.SHA,
+		})
+	}
+
+	tree, _, err := client.Git.CreateTree(ctx, owner, repo, *baseCommit.Tree.SHA, entries)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create tree: %v", err)
+	}
+
+	now := time.Now()
+	author := &github.CommitAuthor{
+		Name:  github.Ptr("nodeoperator-ai"),
+		Email: github.Ptr("ai@nodeoperator.sh"),
+		Date:  &github.Timestamp{Time: now},
+	}
+
+	newCommit := &github.Commit{
+		Message:   github.Ptr(commitMsg),
+		Tree:      tree,
+		Parents:   []*github.Commit{baseCommit},
+		Author:    author,
+		Committer: author,
+	}
+
+	commit, _, err := client.Git.CreateCommit(ctx, owner, repo, newCommit, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create commit: %v", err)
+	}
+
+	return commit, nil
+}
+
+func (h *GitHubDeployHandler) agentUpdatePR(ctx context.Context, payload ReleasesWebhookPayload, summary *AgentSummary) (string, error) {
+	var releaseTag string
+	for _, release := range payload.Releases {
+		releaseTag = release.TagName
+		break
+	}
+
+	if releaseTag == "" {
+		return "", fmt.Errorf("no release tag found in payload")
+	}
+
+	var networkName string
+	for _, repo := range payload.Repositories {
+		if repo.NetworkName != "" {
+			networkName = repo.NetworkName
+			break
+		}
+	}
+
+	// Creating PR
+	prTitle, prBody, commitMessage := BuildPRContent(networkName, releaseTag, summary)
+
+	req := NetworkUpdateRequest{
+		DetectedNetworks: summary.DetectedNetworks,
+		ReleaseTag:       releaseTag,
+		CommitMessage:    commitMessage,
+		PRTitle:          prTitle,
+		PRBody:           prBody,
+		BranchPrefix:     "ai-update",
+	}
+
+	result, err := h.updateNetworkImages(ctx, req)
+	if err != nil {
+		return "", err
+	}
+
+	return result.PRUrl, nil
 }
 
 func updateAllImageTagsYAML(yamlContent string, repoToTag map[string]string) (string, bool, error) {

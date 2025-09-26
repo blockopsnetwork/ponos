@@ -8,6 +8,8 @@ import (
 )
 
 type Config struct {
+	MySQLDSN string `envconfig:"MYSQL_DSN" default:"root:root@tcp(127.0.0.1:3306)/ponos?parseTime=true"`
+
 	GitHubPEMKey    string `envconfig:"GITHUB_PEM_KEY" default:""`
 	GitHubAppID     int64  `envconfig:"GITHUB_APP_ID" default:"0"`
 	GitHubInstallID int64  `envconfig:"GITHUB_INSTALL_ID" default:"0"`
