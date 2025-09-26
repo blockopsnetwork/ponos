@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -13,37 +14,10 @@ func min(a, b int) int {
 	return b
 }
 
-type ReleasesWebhookPayload struct {
-	EventType    string                         `json:"event_type"`
-	Username     string                         `json:"username"`
-	Timestamp    string                         `json:"timestamp"`
-	Repositories []Repository                   `json:"repositories"`
-	Releases     map[string]ReleaseInfo        `json:"releases"`
-}
-
-type Repository struct {
-	Owner       string `json:"owner"`
-	Name        string `json:"name"`
-	DisplayName string `json:"display_name"`
-	NetworkKey  string `json:"network_key"`
-	NetworkName string `json:"network_name"`
-	ReleaseTag  string `json:"release_tag"`
-	ClientType  string `json:"client_type"`
-}
-
-type ReleaseInfo struct {
-	TagName     string `json:"tag_name"`
-	Name        string `json:"name"`
-	Body        string `json:"body"`
-	HTMLURL     string `json:"html_url"`
-	PublishedAt string `json:"published_at"`
-	Prerelease  bool   `json:"prerelease"`
-	Draft       bool   `json:"draft"`
-}
-
 type WebhookHandler struct {
-	bot   *Bot
-	agent *NodeOperatorAgent
+	bot                  *Bot
+	agent                *NodeOperatorAgent
+	AgentFeedbackChannel string
 }
 
 func NewWebhookHandler(bot *Bot) *WebhookHandler {
@@ -53,10 +27,11 @@ func NewWebhookHandler(bot *Bot) *WebhookHandler {
 		// continue without agent for now
 		agent = nil
 	}
-	
+
 	return &WebhookHandler{
-		bot:   bot,
-		agent: agent,
+		bot:                  bot,
+		agent:                agent,
+		AgentFeedbackChannel: "sre-tasks", 
 	}
 }
 
@@ -72,64 +47,38 @@ func (wh *WebhookHandler) handleReleasesWebhook(w http.ResponseWriter, r *http.R
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	
+
 	var payload ReleasesWebhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
-		wh.bot.logger.Error("failed to parse webhook payload", 
-			"error", err, 
+		wh.bot.logger.Error("failed to parse webhook payload",
+			"error", err,
 			"body_length", len(body),
 			"body_preview", string(body[:min(200, len(body))]))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	wh.bot.logger.Info("received releases webhook",
-		"event_type", payload.EventType,
-		"username", payload.Username,
-		"timestamp", payload.Timestamp,
-		"repositories_count", len(payload.Repositories),
-		"releases_count", len(payload.Releases))
+	wh.bot.logger.Info("Processing release webhook",
+		"repositories", len(payload.Repositories),
+		"releases", len(payload.Releases))
 
-	for _, repo := range payload.Repositories {
-		wh.bot.logger.Info("repository in payload",
-			"owner", repo.Owner,
-			"name", repo.Name,
-			"display_name", repo.DisplayName,
-			"network", repo.NetworkName,
-			"client_type", repo.ClientType)
-	}
-
-	for key, release := range payload.Releases {
-		wh.bot.logger.Info("release in payload",
-			"key", key,
-			"tag_name", release.TagName,
-			"name", release.Name,
-			"prerelease", release.Prerelease,
-			"published_at", release.PublishedAt)
-	}
-
-	// Process with agent if available
 	if wh.agent != nil {
-		decision, err := wh.agent.ProcessReleaseUpdate(r.Context(), payload)
+		summary, err := wh.agent.ProcessReleaseUpdate(r.Context(), payload)
 		if err != nil {
 			wh.bot.logger.Error("AI agent processing failed", "error", err)
 		} else {
-			wh.bot.logger.Info("AI agent decision",
-				"should_update", decision.ShouldUpdate,
-				"severity", decision.Severity,
-				"update_strategy", decision.UpdateStrategy,
-				"detected_networks", decision.DetectedNetworks,
-				"reasoning", decision.Reasoning)
-			
-			// Act on the AI agent decision
-			if decision.ShouldUpdate && decision.UpdateStrategy == "create_pr" {
-				wh.bot.logger.Info("Creating PR based on AI agent decision")
-				go wh.createPRFromAgentDecision(payload, decision)
-			} else {
-				wh.bot.logger.Info("Skipping PR creation", 
-					"should_update", decision.ShouldUpdate,
-					"update_strategy", decision.UpdateStrategy)
-			}
+
+			go func() {
+				ctx := context.Background()
+				prURL, err := wh.bot.githubHandler.agentUpdatePR(ctx, payload, summary)
+				if err != nil {
+					wh.bot.logger.Error("Failed to create AI PR", "error", err)
+					wh.bot.sendReleaseSummaryFromAgent(wh.AgentFeedbackChannel, payload, summary)
+				} else {
+					wh.bot.logger.Info("PR created", "url", prURL)
+					wh.bot.sendReleaseSummaryFromAgent(wh.AgentFeedbackChannel, payload, summary, prURL)
+				}
+			}()
 		}
 	} else {
 		wh.bot.logger.Info("AI agent not available, skipping processing")

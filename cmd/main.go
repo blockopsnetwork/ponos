@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,12 +15,45 @@ import (
 	"time"
 
 	"github.com/blockops-sh/ponos/config"
+	"github.com/go-co-op/gocron/v2"
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/mysqldialect"
 )
+
+type ReleasesWebhookPayload struct {
+	EventType    string                 `json:"event_type"`
+	Username     string                 `json:"username"`
+	Timestamp    string                 `json:"timestamp"`
+	Repositories []Repository           `json:"repositories"`
+	Releases     map[string]ReleaseInfo `json:"releases"`
+}
+
+type Repository struct {
+	Owner       string `json:"owner"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	NetworkKey  string `json:"network_key"`
+	NetworkName string `json:"network_name"`
+	ReleaseTag  string `json:"release_tag"`
+	ClientType  string `json:"client_type"`
+}
+
+type ReleaseInfo struct {
+	TagName     string `json:"tag_name"`
+	Name        string `json:"name"`
+	Body        string `json:"body"`
+	HTMLURL     string `json:"html_url"`
+	PublishedAt string `json:"published_at"`
+	Prerelease  bool   `json:"prerelease"`
+	Draft       bool   `json:"draft"`
+}
 
 type Bot struct {
 	client        *slack.Client
+	db            *sql.DB
 	config        *config.Config
 	logger        *slog.Logger
 	githubHandler *GitHubDeployHandler
@@ -35,10 +69,34 @@ func main() {
 		os.Exit(1)
 	}
 
+	sqldb, err := sql.Open("mysql", cfg.MySQLDSN)
+	if err != nil {
+		panic(err)
+	}
+
+	db := bun.NewDB(sqldb, mysqldialect.New())
+
+	if err := db.Ping(); err != nil {
+		logger.Error("failed to ping database", "error", err)
+		os.Exit(1)
+	}
+
+	scheduler, err := gocron.NewScheduler()
+	if err != nil {
+		panic(err.Error())
+	}
+
 	api := slack.New(cfg.SlackToken)
+
+	if err := createScheduleJobs(scheduler, db, logger, api); err != nil {
+		panic(err)
+	}
+
+	scheduler.Start()
 
 	bot := &Bot{
 		client: api,
+		// db:     db,
 		config: cfg,
 		logger: logger,
 	}
@@ -67,6 +125,9 @@ func main() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
 	<-stop
+	_ = db.Close()
+	_ = scheduler.Shutdown()
+
 	logger.Info("shutting down server")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -229,8 +290,10 @@ func (b *Bot) handleSlashCommand(w http.ResponseWriter, r *http.Request) {
 			ResponseType: "in_channel",
 			Text:         fmt.Sprintf("Hello <@%s>! You said: %s", userID, text),
 		}
-	case DeployAPICmd:
+	case DeployDashboardCmd, DeployAPICmd, DeployProxyCmd:
 		response = b.githubHandler.HandleDeploy(command, text, userID, channelID)
+	case UpdatePolkadotToLatestCmd:
+		response = b.githubHandler.HandleUpdateChain(text, userID)
 	case UpdateNetworkCmd:
 		response = b.githubHandler.HandleUpdateNetwork(text, userID)
 	default:
@@ -243,10 +306,15 @@ func (b *Bot) handleSlashCommand(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 
-	b.logger.Info("handled slash command",
-		"command", command,
-		"user", userID,
-		"channel", channelID,
-		"text", text)
 }
 
+func (b *Bot) sendReleaseSummaryFromAgent(channel string, payload ReleasesWebhookPayload, summary *AgentSummary, prURL ...string) {
+	blocks := BuildReleaseNotificationBlocks(payload, summary, prURL...)
+
+	if _, _, err := b.client.PostMessage(channel, slack.MsgOptionBlocks(blocks...)); err != nil {
+		b.logger.Error("failed to send release summary to Slack",
+			"error", err,
+			"channel", channel,
+			"summary", summary)
+	}
+}
