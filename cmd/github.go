@@ -785,10 +785,8 @@ func (h *GitHubDeployHandler) createBranchAndPR(ctx context.Context, client *git
 func extractImageReposFromYAML(yamlContent string) []string {
 	mainRepos := extractMainApplicationRepos(yamlContent)
 	if len(mainRepos) > 0 {
-		fmt.Printf("DEBUG: Found main repos: %v\n", mainRepos)
 		return mainRepos
 	}
-	fmt.Printf("DEBUG: No main repos found, falling back to all repos\n")
 	
 	// Fallback to extracting all repos if we can't identify main containers
 	var root yaml.Node
@@ -872,8 +870,7 @@ func extractMainApplicationRepos(yamlContent string) []string {
 							repo := img[:idx]
 							
 							isMain := isMainContainer(currentContainerName, repo)
-							fmt.Printf("DEBUG: Container '%s' with repo '%s' -> isMain: %v\n", currentContainerName, repo, isMain)
-							container := containerInfo{
+									container := containerInfo{
 								name:            currentContainerName,
 								image:           img,
 								repo:            repo,
@@ -901,8 +898,7 @@ func extractMainApplicationRepos(yamlContent string) []string {
 							}
 							
 							isMain := isMainContainer(currentContainerName, repo)
-							fmt.Printf("DEBUG: Container '%s' with repo '%s' (mapped format) -> isMain: %v\n", currentContainerName, repo, isMain)
-							container := containerInfo{
+									container := containerInfo{
 								name:            currentContainerName,
 								image:           img,
 								repo:            repo,
@@ -1246,7 +1242,7 @@ func (h *GitHubDeployHandler) createCommitFromFiles(ctx context.Context, client 
 	now := time.Now()
 	author := &github.CommitAuthor{
 		Name:  github.Ptr("nodeoperator-ai"),
-		Email: github.Ptr("ai@nodeoperator.sh"),
+		Email: github.Ptr("agent@nodeoperator.ai"),
 		Date:  &github.Timestamp{Time: now},
 	}
 
@@ -1294,7 +1290,7 @@ func (h *GitHubDeployHandler) agentUpdatePR(ctx context.Context, payload Release
 		CommitMessage:    commitMessage,
 		PRTitle:          prTitle,
 		PRBody:           prBody,
-		BranchPrefix:     "ai-update",
+		BranchPrefix:     "ponos-ai-update",
 	}
 
 	result, err := h.updateNetworkImages(ctx, req)
@@ -1322,14 +1318,41 @@ func updateAllImageTagsYAML(yamlContent string, repoToTag map[string]string) (st
 			for i := 0; i < len(n.Content)-1; i += 2 {
 				key := n.Content[i]
 				val := n.Content[i+1]
-				if key.Value == "image" && val.Kind == yaml.ScalarNode {
-					img := val.Value
-					if idx := strings.Index(img, ":"); idx > 0 {
-						repo := img[:idx]
-						if tag, ok := repoToTag[repo]; ok {
-							newVal := repo + ":" + tag
-							if val.Value != newVal {
-								val.Value = newVal
+				if key.Value == "image" {
+					if val.Kind == yaml.ScalarNode {
+						// Handle simple format: image: "parity/polkadot:stable2503-9"
+						img := val.Value
+						if idx := strings.Index(img, ":"); idx > 0 {
+							repo := img[:idx]
+							if tag, ok := repoToTag[repo]; ok {
+								newVal := repo + ":" + tag
+								if val.Value != newVal {
+									val.Value = newVal
+									updated = true
+								}
+							}
+						}
+					} else if val.Kind == yaml.MappingNode {
+						// Handle mapped format: image: { repo: parity/polkadot, tag: stable2503-9 }
+						var repo, currentTag string
+						var tagNode *yaml.Node
+						
+						// Find repo and tag fields
+						for j := 0; j < len(val.Content)-1; j += 2 {
+							subKey := val.Content[j]
+							subVal := val.Content[j+1]
+							if subKey.Value == "repo" && subVal.Kind == yaml.ScalarNode {
+								repo = subVal.Value
+							} else if subKey.Value == "tag" && subVal.Kind == yaml.ScalarNode {
+								currentTag = subVal.Value
+								tagNode = subVal
+							}
+						}
+						
+						// Update tag if we have a new one for this repo
+						if repo != "" && tagNode != nil {
+							if newTag, ok := repoToTag[repo]; ok && newTag != currentTag {
+								tagNode.Value = newTag
 								updated = true
 							}
 						}
