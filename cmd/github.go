@@ -6,8 +6,11 @@ import (
 	"os"
 	"strings"
 	"time"
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/blockops-sh/ponos/config"
+	"github.com/google/go-github/v72/github"
+	"golang.org/x/oauth2"
 	"github.com/slack-go/slack"
 )
 
@@ -34,7 +37,110 @@ type GitHubDeployHandler struct {
 	auth        *GitHubAuthenticator
 	docker      *DockerOperations
 	yaml        *YAMLOperations
-	git         *GitOperations
+	git         *GitTools
+}
+
+type fileInfo struct {
+	owner string
+	repo  string
+	path  string
+}
+
+type fileCommitData struct {
+	owner   string
+	repo    string
+	path    string
+	sha     string
+	newYAML string
+}
+
+type imageUpgrade struct {
+	file   string
+	oldImg string
+	newImg string
+}
+
+type dockerTagResult struct {
+	ImageToTag map[string]string
+	Error      error
+}
+
+type dockerTag struct {
+	Name        string `json:"name"`
+	LastUpdated string `json:"last_updated"`
+}
+
+type dockerTagsResp struct {
+	Results []dockerTag `json:"results"`
+}
+
+type NetworkUpdateRequest struct {
+	DetectedNetworks []string
+	ReleaseTag       string
+	CommitMessage    string
+	PRTitle          string
+	PRBody           string
+	BranchPrefix     string
+}
+
+type NetworkUpdateResult struct {
+	PRUrl         string
+	CommitURL     string
+	UpdatedFiles  []string
+	ImageUpgrades []imageUpgrade
+	Success       bool
+	Error         error
+}
+
+type GitHubAuthenticator struct {
+	pemKey    []byte
+	appID     int64
+	installID int64
+}
+
+func NewGitHubAuthenticator(pemKey []byte, appID, installID int64) *GitHubAuthenticator {
+	return &GitHubAuthenticator{
+		pemKey:    pemKey,
+		appID:     appID,
+		installID: installID,
+	}
+}
+
+func (auth *GitHubAuthenticator) GenerateJWT() (string, error) {
+	key, err := jwt.ParseRSAPrivateKeyFromPEM(auth.pemKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse RSA private key: %v", err)
+	}
+
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"iat": now.Unix(),
+		"exp": now.Add(10 * time.Minute).Unix(),
+		"iss": auth.appID,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	return token.SignedString(key)
+}
+
+func (auth *GitHubAuthenticator) CreateClient(ctx context.Context) (*github.Client, error) {
+	jwtToken, err := auth.GenerateJWT()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate JWT: %v", err)
+	}
+
+	appClient := github.NewClient(nil).WithAuthToken(jwtToken)
+	
+	installToken, _, err := appClient.Apps.CreateInstallationToken(
+		ctx, auth.installID, &github.InstallationTokenOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create installation token: %v", err)
+	}
+
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: installToken.GetToken()})
+	tc := oauth2.NewClient(ctx, ts)
+	
+	return github.NewClient(tc), nil
 }
 
 func NewGitHubDeployHandler(bot *Bot) *GitHubDeployHandler {
@@ -51,7 +157,7 @@ func NewGitHubDeployHandler(bot *Bot) *GitHubDeployHandler {
 		auth:   auth,
 		docker: NewDockerOperations(),
 		yaml:   NewYAMLOperations(),
-		git:    NewGitOperations(),
+		git:    NewGitTools(),
 		repoConfigs: map[string]RepoConfig{
 			DeployDashboardCmd: {
 				Name:          DashboardRepo,
