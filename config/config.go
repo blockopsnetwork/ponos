@@ -8,18 +8,12 @@ import (
 )
 
 type Config struct {
-	MySQLDSN string `envconfig:"MYSQL_DSN" default:"root:root@tcp(127.0.0.1:3306)/ponos?parseTime=true"`
-
 	GitHubPEMKey    string `envconfig:"GITHUB_PEM_KEY" default:""`
 	GitHubAppID     int64  `envconfig:"GITHUB_APP_ID" default:"0"`
 	GitHubInstallID int64  `envconfig:"GITHUB_INSTALL_ID" default:"0"`
 
 	SlackToken      string `envconfig:"SLACK_TOKEN" default:""`
 	SlackSigningKey string `envconfig:"SLACK_SIGNING_SECRET" default:""`
-
-	// Slack channels for notifications
-	UsersReportChannel   string `envconfig:"SLACK_USERS_CHANNEL" default:"C05TT7LULP8"`
-	SupportReportChannel string `envconfig:"SLACK_SUPPORT_CHANNEL" default:"C06GTAC99T9"`
 
 	Port string `envconfig:"PORT" default:"8080"`
 }
