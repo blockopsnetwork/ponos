@@ -65,14 +65,14 @@ func (wh *WebhookHandler) handleReleasesWebhook(w http.ResponseWriter, r *http.R
 	if wh.agent != nil {
 		summary, err := wh.agent.ProcessReleaseUpdate(r.Context(), payload)
 		if err != nil {
-			wh.bot.logger.Error("AI agent processing failed", "error", err)
+			wh.bot.logger.Error("agent processing failed", "error", err)
 		} else {
 
 			go func() {
 				ctx := context.Background()
 				prURL, err := wh.bot.githubHandler.agentUpdatePR(ctx, payload, summary)
 				if err != nil {
-					wh.bot.logger.Error("Failed to create AI PR", "error", err)
+					wh.bot.logger.Error("Agent failed to create PR", "error", err)
 					wh.bot.sendReleaseSummaryFromAgent(wh.AgentFeedbackChannel, payload, summary)
 				} else {
 					wh.bot.logger.Info("PR created", "url", prURL)
@@ -81,7 +81,7 @@ func (wh *WebhookHandler) handleReleasesWebhook(w http.ResponseWriter, r *http.R
 			}()
 		}
 	} else {
-		wh.bot.logger.Info("AI agent not available, skipping processing")
+		wh.bot.logger.Info("nodeoperator agent not available, skipping processing")
 	}
 
 	w.Header().Set("Content-Type", "application/json")
