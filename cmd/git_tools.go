@@ -10,13 +10,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type GitOperations struct{}
+type GitTools struct{}
 
-func NewGitOperations() *GitOperations {
-	return &GitOperations{}
+func NewGitTools() *GitTools {
+	return &GitTools{}
 }
 
-func (g *GitOperations) CreateBranchFromMain(ctx context.Context, client *github.Client, owner, repo, branchName string) (*github.Reference, error) {
+func (g *GitTools) CreateBranchFromMain(ctx context.Context, client *github.Client, owner, repo, branchName string) (*github.Reference, error) {
 	// Get the main branch ref first
 	mainRef, _, err := client.Git.GetRef(ctx, owner, repo, "refs/heads/main")
 	if err != nil {
@@ -39,7 +39,7 @@ func (g *GitOperations) CreateBranchFromMain(ctx context.Context, client *github
 	return createdRef, nil
 }
 
-func (g *GitOperations) CreatePR(ctx context.Context, client *github.Client, owner, repo, branchName, prTitle, prBody string) (*github.PullRequest, error) {
+func (g *GitTools) CreatePR(ctx context.Context, client *github.Client, owner, repo, branchName, prTitle, prBody string) (*github.PullRequest, error) {
 	pr := &github.NewPullRequest{
 		Title: &prTitle,
 		Head:  &branchName,
@@ -55,7 +55,7 @@ func (g *GitOperations) CreatePR(ctx context.Context, client *github.Client, own
 	return pullRequest, nil
 }
 
-func (g *GitOperations) CreateCommitFromFiles(ctx context.Context, client *github.Client, owner, repo, branch string, filesToCommit []fileCommitData, commitMsg string) (*github.Commit, error) {
+func (g *GitTools) CreateCommitFromFiles(ctx context.Context, client *github.Client, owner, repo, branch string, filesToCommit []fileCommitData, commitMsg string) (*github.Commit, error) {
 	ref, _, err := client.Git.GetRef(ctx, owner, repo, "refs/heads/"+branch)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ref: %v", err)
@@ -116,7 +116,7 @@ func (g *GitOperations) CreateCommitFromFiles(ctx context.Context, client *githu
 	return newCommit, nil
 }
 
-func (g *GitOperations) PrepareFileUpdates(ctx context.Context, client *github.Client, filesToUpdate []fileInfo, imageToTag map[string]string) ([]fileCommitData, []imageUpgrade, error) {
+func (g *GitTools) PrepareFileUpdates(ctx context.Context, client *github.Client, filesToUpdate []fileInfo, imageToTag map[string]string) ([]fileCommitData, []imageUpgrade, error) {
 	var filesToCommit []fileCommitData
 	var upgrades []imageUpgrade
 	
