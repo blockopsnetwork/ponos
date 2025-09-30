@@ -1,19 +1,24 @@
 package config
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/kelseyhightower/envconfig"
 	"gopkg.in/yaml.v3"
 )
 
-type Config struct {
-	GitHubPEMKey    string `envconfig:"GITHUB_PEM_KEY" default:""`
-	GitHubAppID     int64  `envconfig:"GITHUB_APP_ID" default:"0"`
-	GitHubInstallID int64  `envconfig:"GITHUB_INSTALL_ID" default:"0"`
 
-	SlackToken      string `envconfig:"SLACK_TOKEN" default:""`
-	SlackSigningKey string `envconfig:"SLACK_SIGNING_SECRET" default:""`
+type Config struct {
+	GitHubToken     string `envconfig:"GITHUB_TOKEN" default:""`        
+	GitHubAppID     string `envconfig:"GITHUB_APP_ID" default:""`      
+	GitHubInstallID string `envconfig:"GITHUB_INSTALL_ID" default:""`  
+	GitHubPEMKey    string `envconfig:"GITHUB_PEM_KEY" default:""`      
+	GitHubBotName   string `envconfig:"GITHUB_BOT_NAME" default:"ponos-bot"` 
+
+	SlackToken         string `envconfig:"SLACK_TOKEN" default:""`
+	SlackSigningKey    string `envconfig:"SLACK_SIGNING_SECRET" default:""`
+	SlackUpdateChannel string `envconfig:"SLACK_UPDATE_CHANNEL" default:"sre-tasks"`
 
 	Port string `envconfig:"PORT" default:"8080"`
 }
@@ -38,6 +43,27 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+func (c *Config) ValidateGitHubBotConfig() error {
+	if c.GitHubAppID != "" || c.GitHubInstallID != "" || c.GitHubPEMKey != "" {
+		if c.GitHubAppID == "" {
+			return fmt.Errorf("GITHUB_APP_ID is required when using GitHub App authentication")
+		}
+		if c.GitHubInstallID == "" {
+			return fmt.Errorf("GITHUB_INSTALL_ID is required when using GitHub App authentication") 
+		}
+		if c.GitHubPEMKey == "" {
+			return fmt.Errorf("GITHUB_PEM_KEY is required when using GitHub App authentication")
+		}
+		return nil
+	}
+	
+	if c.GitHubToken == "" {
+		return fmt.Errorf("either GitHub App credentials (GITHUB_APP_ID, GITHUB_INSTALL_ID, GITHUB_PEM_KEY) or GITHUB_TOKEN is required")
+	}
+	
+	return nil
 }
 
 func LoadProjectConfig(configPath string) (*ProjectConfig, error) {
