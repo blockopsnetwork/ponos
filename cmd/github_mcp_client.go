@@ -168,7 +168,6 @@ func (g *GitHubMCPClient) CallTool(ctx context.Context, toolName string, args ma
 		return nil, fmt.Errorf("failed to read response: %v", err)
 	}
 
-	g.logger.Info("received MCP response", "status", resp.StatusCode)
 
 	// Handle session expiry - retry with new session
 	if resp.StatusCode == 400 && string(respBody) == "Invalid session ID\n" {
@@ -329,9 +328,7 @@ func (g *GitHubMCPClient) CreateCommit(ctx context.Context, owner, repo, branch,
 		}
 	}
 
-	// Log the response structure for debugging and return a placeholder
-	g.logger.Info("push_files response structure (no SHA found)", "result", result)
-	return "unknown-sha", nil // Return a placeholder instead of failing
+	return "unknown-sha", nil
 }
 
 // CreatePullRequest creates a pull request
@@ -379,8 +376,6 @@ func (g *GitHubMCPClient) CreatePullRequest(ctx context.Context, owner, repo, he
 		}
 	}
 
-	// Log the response structure for debugging
-	g.logger.Info("create_pull_request response structure (no URL found)", "result", result)
 	return "", fmt.Errorf("PR URL not found in response")
 }
 
