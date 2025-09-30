@@ -99,6 +99,10 @@ func NewGitHubDeployHandler(bot *Bot) *GitHubDeployHandler {
 	mcpClient := NewGitHubMCPClient(
 		"https://api.githubcopilot.com/mcp/",
 		bot.config.GitHubToken,
+		bot.config.GitHubAppID,
+		bot.config.GitHubInstallID,
+		bot.config.GitHubPEMKey,
+		bot.config.GitHubBotName,
 		bot.logger,
 	)
 
@@ -361,7 +365,7 @@ func (h *GitHubDeployHandler) agentUpdatePR(ctx context.Context, payload Release
 	repo := payload.Repositories[0]
 	releaseTag := repo.ReleaseTag
 
-	title, body, commitMessage := BuildPRContent(repo.NetworkName, releaseTag, summary)
+	title, body, commitMessage := BuildPRContent(repo.NetworkName, releaseTag, h.mcpClient.botName, summary)
 
 	req := NetworkUpdateRequest{
 		DetectedNetworks: []string{strings.ToLower(repo.NetworkName)},

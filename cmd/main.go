@@ -65,6 +65,13 @@ func main() {
 		logger.Error("failed to load configuration", "error", err)
 		os.Exit(1)
 	}
+	
+	// Validate GitHub bot configuration
+	if err := cfg.ValidateGitHubBotConfig(); err != nil {
+		logger.Error("GitHub bot configuration error", "error", err)
+		logger.Info("See config/config.go for setup instructions")
+		os.Exit(1)
+	}
 
 	api := slack.New(cfg.SlackToken)
 

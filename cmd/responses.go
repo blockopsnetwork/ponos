@@ -73,12 +73,16 @@ func BuildReleaseNotificationBlocks(payload ReleasesWebhookPayload, summary *Age
 	}
 }
 
-func BuildPRContent(networkName, releaseTag string, summary *AgentSummary) (title, body, commitMessage string) {
-	title = fmt.Sprintf("Ponos: Update %s to %s", networkName, releaseTag)
+func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSummary) (title, body, commitMessage string) {
+	if botName == "" {
+		botName = "Ponos"
+	}
 	
-	body = fmt.Sprintf(`## Automated Update by Ponos
+	title = fmt.Sprintf("%s: Update %s to %s", botName, networkName, releaseTag)
+	
+	body = fmt.Sprintf(`## 🤖 Automated Update by %s
 
-**AI Generated Release Summary:**
+**NodeOperator AI Analysis:**
 %s
 
 **Configuration Changes:**
@@ -87,16 +91,24 @@ func BuildPRContent(networkName, releaseTag string, summary *AgentSummary) (titl
 **Risk Assessment:**
 %s
 
-**Analysis:** Ponos AI has analyzed this release (Severity: %s)
+**Severity:** %s
 
 ---
-*This PR was automatically created by Ponos. Please review and decide whether to merge or close.*`,
+**About this PR:**
+- 🤖 **Created by:** %s Bot
+- 🔍 **AI Analysis:** Comprehensive release analysis performed
+- ⚡ **Action Required:** Review and decide whether to merge or close
+
+*This PR was automatically created by %s. The AI has analyzed the release and provided recommendations above.*`,
+		botName,
 		summary.ReleaseSummary,
 		summary.ConfigChangesNeeded,
 		summary.RiskAssessment,
-		strings.ToUpper(summary.Severity))
+		strings.ToUpper(summary.Severity),
+		botName,
+		botName)
 	
-	commitMessage = fmt.Sprintf("🤖 AI Update: %s to %s\n\n%s", networkName, releaseTag, summary.ReleaseSummary)
+	commitMessage = fmt.Sprintf("🤖 %s: Update %s to %s\n\n%s", botName, networkName, releaseTag, summary.ReleaseSummary)
 	
 	return title, body, commitMessage
 }

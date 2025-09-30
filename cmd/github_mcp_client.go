@@ -3,20 +3,28 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
-// GitHubMCPClient implements GitHub operations using the remote MCP server
 type GitHubMCPClient struct {
-	serverURL string
-	token     string
-	client    *http.Client
-	logger    *slog.Logger
-	sessionID string
+	serverURL   string
+	token       string
+	client      *http.Client
+	logger      *slog.Logger
+	sessionID   string
+	appID       string
+	installID   string
+	pemKey      string
+	botName     string
 }
 
 // MCPRequest represents a JSON-RPC request to the MCP server
@@ -49,12 +57,16 @@ type ToolCallParams struct {
 }
 
 // NewGitHubMCPClient creates a new GitHub MCP client
-func NewGitHubMCPClient(serverURL, token string, logger *slog.Logger) *GitHubMCPClient {
+func NewGitHubMCPClient(serverURL, token, appID, installID, pemKey, botName string, logger *slog.Logger) *GitHubMCPClient {
 	client := &GitHubMCPClient{
 		serverURL: serverURL,
 		token:     token,
 		client:    &http.Client{},
 		logger:    logger,
+		appID:     appID,
+		installID: installID,
+		pemKey:    pemKey,
+		botName:   botName,
 	}
 	
 	// Initialize the MCP session
@@ -77,7 +89,7 @@ func (g *GitHubMCPClient) initialize() error {
 				"tools": map[string]interface{}{},
 			},
 			"clientInfo": map[string]interface{}{
-				"name":    "ponos",
+				"name":    g.getBotClientName(),
 				"version": "1.0.0",
 			},
 		},
@@ -94,8 +106,15 @@ func (g *GitHubMCPClient) initialize() error {
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+g.token)
-	httpReq.Header.Set("User-Agent", "ponos/1.0")
+	
+	// Get access token (either direct token or generated from GitHub App)
+	accessToken, err := g.getAccessToken()
+	if err != nil {
+		return fmt.Errorf("failed to get access token: %v", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+accessToken)
+	
+	httpReq.Header.Set("User-Agent", g.getUserAgent())
 
 	resp, err := g.client.Do(httpReq)
 	if err != nil {
@@ -149,8 +168,15 @@ func (g *GitHubMCPClient) CallTool(ctx context.Context, toolName string, args ma
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+g.token)
-	httpReq.Header.Set("User-Agent", "ponos/1.0")
+	
+	// Get access token (either direct token or generated from GitHub App)
+	accessToken, err := g.getAccessToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get access token: %v", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+accessToken)
+	
+	httpReq.Header.Set("User-Agent", g.getUserAgent())
 	
 	// Include session ID if we have one
 	if g.sessionID != "" {
@@ -396,4 +422,102 @@ func (g *GitHubMCPClient) UpdateFile(ctx context.Context, owner, repo, path, con
 	}
 
 	return nil
+}
+
+// getBotClientName returns the appropriate client name for MCP initialization
+func (g *GitHubMCPClient) getBotClientName() string {
+	if g.botName != "" {
+		return g.botName
+	}
+	return "ponos"
+}
+
+// getUserAgent returns the appropriate User-Agent header
+func (g *GitHubMCPClient) getUserAgent() string {
+	if g.botName != "" {
+		return g.botName + "/1.0"
+	}
+	return "ponos/1.0"
+}
+
+// getAccessToken returns an access token, either from GITHUB_TOKEN or by generating one from GitHub App credentials
+func (g *GitHubMCPClient) getAccessToken() (string, error) {
+	// If we have a direct token, use it
+	if g.token != "" {
+		return g.token, nil
+	}
+	
+	// If we have GitHub App credentials, generate an installation access token
+	if g.appID != "" && g.installID != "" && g.pemKey != "" {
+		return g.generateInstallationToken()
+	}
+	
+	return "", fmt.Errorf("no authentication credentials provided")
+}
+
+// generateInstallationToken creates a GitHub App installation access token
+func (g *GitHubMCPClient) generateInstallationToken() (string, error) {
+	// Parse the PEM key
+	block, _ := pem.Decode([]byte(g.pemKey))
+	if block == nil {
+		return "", fmt.Errorf("failed to parse PEM block containing the key")
+	}
+	
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse RSA private key: %v", err)
+	}
+	
+	// Create JWT claims
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"iat": now.Unix(),
+		"exp": now.Add(time.Minute * 10).Unix(), // GitHub requires max 10 minutes
+		"iss": g.appID,
+	}
+	
+	// Create and sign the JWT
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	jwtToken, err := token.SignedString(privateKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to sign JWT: %v", err)
+	}
+	
+	// Exchange JWT for installation access token
+	return g.exchangeJWTForAccessToken(jwtToken)
+}
+
+// exchangeJWTForAccessToken exchanges a JWT for an installation access token
+func (g *GitHubMCPClient) exchangeJWTForAccessToken(jwtToken string) (string, error) {
+	url := fmt.Sprintf("https://api.github.com/app/installations/%s/access_tokens", g.installID)
+	
+	req, err := http.NewRequest("POST", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %v", err)
+	}
+	
+	req.Header.Set("Authorization", "Bearer "+jwtToken)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("User-Agent", g.getUserAgent())
+	
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to exchange JWT: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("failed to get access token (status %d): %s", resp.StatusCode, string(body))
+	}
+	
+	var tokenResp struct {
+		Token string `json:"token"`
+	}
+	
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return "", fmt.Errorf("failed to decode token response: %v", err)
+	}
+	
+	return tokenResp.Token, nil
 }
