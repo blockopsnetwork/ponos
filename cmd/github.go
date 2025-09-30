@@ -3,15 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
-	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/blockops-sh/ponos/config"
-	"github.com/google/go-github/v72/github"
-	"golang.org/x/oauth2"
 	"github.com/slack-go/slack"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -34,10 +31,9 @@ type RepoConfig struct {
 type GitHubDeployHandler struct {
 	bot         *Bot
 	repoConfigs map[string]RepoConfig
-	auth        *GitHubAuthenticator
+	mcpClient   *GitHubMCPClient
 	docker      *DockerOperations
 	yaml        *YAMLOperations
-	git         *GitTools
 }
 
 type fileInfo struct {
@@ -58,6 +54,11 @@ type imageUpgrade struct {
 	file   string
 	oldImg string
 	newImg string
+}
+
+type FileUpdate struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }
 
 type dockerTagResult struct {
@@ -92,72 +93,20 @@ type NetworkUpdateResult struct {
 	Error         error
 }
 
-type GitHubAuthenticator struct {
-	pemKey    []byte
-	appID     int64
-	installID int64
-}
-
-func NewGitHubAuthenticator(pemKey []byte, appID, installID int64) *GitHubAuthenticator {
-	return &GitHubAuthenticator{
-		pemKey:    pemKey,
-		appID:     appID,
-		installID: installID,
-	}
-}
-
-func (auth *GitHubAuthenticator) GenerateJWT() (string, error) {
-	key, err := jwt.ParseRSAPrivateKeyFromPEM(auth.pemKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse RSA private key: %v", err)
-	}
-
-	now := time.Now()
-	claims := jwt.MapClaims{
-		"iat": now.Unix(),
-		"exp": now.Add(10 * time.Minute).Unix(),
-		"iss": auth.appID,
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	return token.SignedString(key)
-}
-
-func (auth *GitHubAuthenticator) CreateClient(ctx context.Context) (*github.Client, error) {
-	jwtToken, err := auth.GenerateJWT()
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate JWT: %v", err)
-	}
-
-	appClient := github.NewClient(nil).WithAuthToken(jwtToken)
-	
-	installToken, _, err := appClient.Apps.CreateInstallationToken(
-		ctx, auth.installID, &github.InstallationTokenOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create installation token: %v", err)
-	}
-
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: installToken.GetToken()})
-	tc := oauth2.NewClient(ctx, ts)
-	
-	return github.NewClient(tc), nil
-}
 
 func NewGitHubDeployHandler(bot *Bot) *GitHubDeployHandler {
-	pemKey, err := os.ReadFile(bot.config.GitHubPEMKey)
-	if err != nil {
-		bot.logger.Error("failed to read GitHub PEM key", "error", err)
-		return nil
-	}
-
-	auth := NewGitHubAuthenticator(pemKey, bot.config.GitHubAppID, bot.config.GitHubInstallID)
+	// Initialize MCP client for GitHub operations
+	mcpClient := NewGitHubMCPClient(
+		"https://api.githubcopilot.com/mcp/",
+		bot.config.GitHubToken,
+		bot.logger,
+	)
 
 	return &GitHubDeployHandler{
-		bot:    bot,
-		auth:   auth,
-		docker: NewDockerOperations(),
-		yaml:   NewYAMLOperations(),
-		git:    NewGitTools(),
+		bot:       bot,
+		mcpClient: mcpClient,
+		docker:    NewDockerOperations(),
+		yaml:     NewYAMLOperations(),
 		repoConfigs: map[string]RepoConfig{
 			DeployDashboardCmd: {
 				Name:          DashboardRepo,
@@ -342,21 +291,14 @@ func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req Netwo
 		}
 	}
 
-	client, err := h.auth.CreateClient(ctx)
-	if err != nil {
-		return result, fmt.Errorf("failed to create GitHub client: %v", err)
-	}
+	// No need to create client - using MCP directly
 
 	imageToTag := make(map[string]string)
 
 	if req.ReleaseTag != "" {
 		for _, f := range filesToUpdate {
-			file, _, _, ferr := client.Repositories.GetContents(ctx, f.owner, f.repo, f.path, nil)
-			if ferr != nil || file == nil {
-				continue
-			}
-			content, cerr := file.GetContent()
-			if cerr != nil {
+			content, ferr := h.mcpClient.GetFileContent(ctx, f.owner, f.repo, f.path)
+			if ferr != nil {
 				continue
 			}
 			images := h.yaml.ExtractImageReposFromYAML(content)
@@ -365,14 +307,14 @@ func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req Netwo
 			}
 		}
 	} else {
-		dockerResult, err := h.docker.FetchLatestStableTags(ctx, client, filesToUpdate)
+		dockerResult, err := h.docker.FetchLatestStableTagsMCP(ctx, h.mcpClient, filesToUpdate)
 		if err != nil {
 			return result, err
 		}
 		imageToTag = dockerResult.ImageToTag
 	}
 
-	filesToCommit, upgrades, err := h.git.PrepareFileUpdates(ctx, client, filesToUpdate, imageToTag)
+	filesToCommit, upgrades, err := h.prepareFileUpdatesMCP(ctx, filesToUpdate, imageToTag)
 	if err != nil {
 		return result, err
 	}
@@ -388,27 +330,27 @@ func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req Netwo
 	// Create branch from main first
 	branchName := fmt.Sprintf("%s-%d", req.BranchPrefix, time.Now().Unix())
 	fmt.Printf("DEBUG: Creating branch %s from main\n", branchName)
-	_, err = h.git.CreateBranchFromMain(ctx, client, owner, repo, branchName)
+	err = h.mcpClient.CreateBranch(ctx, owner, repo, branchName)
 	if err != nil {
-		return result, err
+		return result, fmt.Errorf("failed to create branch: %v", err)
 	}
 
 	// Create commit on the new branch
 	fmt.Printf("DEBUG: Creating commit on branch %s\n", branchName)
-	commit, err := h.git.CreateCommitFromFiles(ctx, client, owner, repo, branchName, filesToCommit, req.CommitMessage)
+	commitSHA, err := h.createCommitFromFilesMCP(ctx, owner, repo, branchName, filesToCommit, req.CommitMessage)
 	if err != nil {
 		return result, err
 	}
 
 	// Create PR from branch to main
 	fmt.Printf("DEBUG: Creating PR from %s to main\n", branchName)
-	pullRequest, err := h.git.CreatePR(ctx, client, owner, repo, branchName, req.PRTitle, req.PRBody)
+	prURL, err := h.mcpClient.CreatePullRequest(ctx, owner, repo, branchName, "main", req.PRTitle, req.PRBody)
 	if err != nil {
 		return result, err
 	}
 
-	result.PRUrl = *pullRequest.HTMLURL
-	result.CommitURL = fmt.Sprintf("https://github.com/%s/%s/commit/%s", owner, repo, *commit.SHA)
+	result.PRUrl = prURL
+	result.CommitURL = fmt.Sprintf("https://github.com/%s/%s/commit/%s", owner, repo, commitSHA)
 	result.ImageUpgrades = upgrades
 	result.Success = true
 
@@ -456,4 +398,101 @@ func (h *GitHubDeployHandler) notifyUpdateChainError(channelID, chain, userID st
 	if err != nil {
 		h.bot.logger.Error("failed to send update chain error message", "error", err, "channel", channelID, "chain", chain)
 	}
+}
+
+// prepareFileUpdatesMCP prepares file updates using MCP to get file contents
+func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesToUpdate []fileInfo, imageToTag map[string]string) ([]fileCommitData, []imageUpgrade, error) {
+	var filesToCommit []fileCommitData
+	var upgrades []imageUpgrade
+
+	fmt.Printf("DEBUG: PrepareFileUpdates called with %d files, imageToTag: %v\n", len(filesToUpdate), imageToTag)
+
+	for _, f := range filesToUpdate {
+		fmt.Printf("DEBUG: Processing file %s/%s:%s\n", f.owner, f.repo, f.path)
+		
+		// Get file content using MCP
+		content, err := h.mcpClient.GetFileContent(ctx, f.owner, f.repo, f.path)
+		if err != nil {
+			fmt.Printf("DEBUG: Failed to get file content for %s: %v\n", f.path, err)
+			continue
+		}
+
+		newYAML, updated, uerr := h.yaml.UpdateAllImageTagsYAML(content, imageToTag)
+		if uerr != nil {
+			fmt.Printf("DEBUG: Failed to update YAML for %s: %v\n", f.path, uerr)
+			continue
+		}
+		if !updated {
+			fmt.Printf("DEBUG: No updates needed for file %s\n", f.path)
+			continue
+		}
+
+		fmt.Printf("DEBUG: File %s was updated successfully\n", f.path)
+
+		// Track upgrades for reporting
+		var oldToNew []imageUpgrade
+		var root yaml.Node
+		if yaml.Unmarshal([]byte(content), &root) == nil {
+			var walk func(n *yaml.Node)
+			walk = func(n *yaml.Node) {
+				if n == nil {
+					return
+				}
+				switch n.Kind {
+				case yaml.MappingNode:
+					for i := 0; i < len(n.Content)-1; i += 2 {
+						key := n.Content[i]
+						val := n.Content[i+1]
+						if key.Value == "image" && val.Kind == yaml.ScalarNode {
+							img := val.Value
+							if idx := strings.Index(img, ":"); idx > 0 {
+								repo := img[:idx]
+								if tag, ok := imageToTag[repo]; ok {
+									newVal := repo + ":" + tag
+									if img != newVal {
+										oldToNew = append(oldToNew, imageUpgrade{file: f.path, oldImg: img, newImg: newVal})
+									}
+								}
+							}
+						}
+						walk(val)
+					}
+				case yaml.SequenceNode:
+					for _, item := range n.Content {
+						walk(item)
+					}
+				}
+			}
+			if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+				walk(root.Content[0])
+			} else {
+				walk(&root)
+			}
+		}
+		upgrades = append(upgrades, oldToNew...)
+
+		filesToCommit = append(filesToCommit, fileCommitData{
+			owner:   f.owner,
+			repo:    f.repo,
+			path:    f.path,
+			sha:     "", // MCP handles SHA automatically
+			newYAML: newYAML,
+		})
+	}
+
+	return filesToCommit, upgrades, nil
+}
+
+// createCommitFromFilesMCP creates a commit with multiple file changes using MCP
+func (h *GitHubDeployHandler) createCommitFromFilesMCP(ctx context.Context, owner, repo, branch string, filesToCommit []fileCommitData, commitMsg string) (string, error) {
+	// Convert fileCommitData to FileUpdate format for MCP
+	var files []FileUpdate
+	for _, f := range filesToCommit {
+		files = append(files, FileUpdate{
+			Path:    f.path,
+			Content: f.newYAML,
+		})
+	}
+
+	return h.mcpClient.CreateCommit(ctx, owner, repo, branch, commitMsg, files)
 }
