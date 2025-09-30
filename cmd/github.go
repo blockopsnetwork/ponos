@@ -319,7 +319,6 @@ func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req Netwo
 		return result, err
 	}
 
-	fmt.Printf("DEBUG: PrepareFileUpdates returned %d files to commit\n", len(filesToCommit))
 	if len(filesToCommit) == 0 {
 		return result, fmt.Errorf("no files needed updating")
 	}
@@ -329,21 +328,18 @@ func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req Netwo
 
 	// Create branch from main first
 	branchName := fmt.Sprintf("%s-%d", req.BranchPrefix, time.Now().Unix())
-	fmt.Printf("DEBUG: Creating branch %s from main\n", branchName)
 	err = h.mcpClient.CreateBranch(ctx, owner, repo, branchName)
 	if err != nil {
 		return result, fmt.Errorf("failed to create branch: %v", err)
 	}
 
 	// Create commit on the new branch
-	fmt.Printf("DEBUG: Creating commit on branch %s\n", branchName)
 	commitSHA, err := h.createCommitFromFilesMCP(ctx, owner, repo, branchName, filesToCommit, req.CommitMessage)
 	if err != nil {
 		return result, err
 	}
 
 	// Create PR from branch to main
-	fmt.Printf("DEBUG: Creating PR from %s to main\n", branchName)
 	prURL, err := h.mcpClient.CreatePullRequest(ctx, owner, repo, branchName, "main", req.PRTitle, req.PRBody)
 	if err != nil {
 		return result, err
@@ -405,29 +401,20 @@ func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesTo
 	var filesToCommit []fileCommitData
 	var upgrades []imageUpgrade
 
-	fmt.Printf("DEBUG: PrepareFileUpdates called with %d files, imageToTag: %v\n", len(filesToUpdate), imageToTag)
-
 	for _, f := range filesToUpdate {
-		fmt.Printf("DEBUG: Processing file %s/%s:%s\n", f.owner, f.repo, f.path)
-		
 		// Get file content using MCP
 		content, err := h.mcpClient.GetFileContent(ctx, f.owner, f.repo, f.path)
 		if err != nil {
-			fmt.Printf("DEBUG: Failed to get file content for %s: %v\n", f.path, err)
 			continue
 		}
 
 		newYAML, updated, uerr := h.yaml.UpdateAllImageTagsYAML(content, imageToTag)
 		if uerr != nil {
-			fmt.Printf("DEBUG: Failed to update YAML for %s: %v\n", f.path, uerr)
 			continue
 		}
 		if !updated {
-			fmt.Printf("DEBUG: No updates needed for file %s\n", f.path)
 			continue
 		}
-
-		fmt.Printf("DEBUG: File %s was updated successfully\n", f.path)
 
 		// Track upgrades for reporting
 		var oldToNew []imageUpgrade
