@@ -51,6 +51,7 @@ type Bot struct {
 	client        *slack.Client
 	config        *config.Config
 	logger        *slog.Logger
+	mcpClient     *GitHubMCPClient
 	githubHandler *GitHubDeployHandler
 }
 
@@ -75,10 +76,21 @@ func main() {
 
 	api := slack.New(cfg.SlackToken)
 
+	mcpClient := NewGitHubMCPClient(
+		"https://api.githubcopilot.com/mcp/",
+		cfg.GitHubToken,
+		cfg.GitHubAppID,
+		cfg.GitHubInstallID,
+		cfg.GitHubPEMKey,
+		cfg.GitHubBotName,
+		logger,
+	)
+
 	bot := &Bot{
-		client: api,
-		config: cfg,
-		logger: logger,
+		client:    api,
+		config:    cfg,
+		logger:    logger,
+		mcpClient: mcpClient,
 	}
 	bot.githubHandler = NewGitHubDeployHandler(bot)
 	webhookHandler := NewWebhookHandler(bot)
@@ -271,9 +283,9 @@ func (b *Bot) handleSlashCommand(w http.ResponseWriter, r *http.Request) {
 	case DeployDashboardCmd, DeployAPICmd, DeployProxyCmd:
 		response = b.githubHandler.HandleDeploy(command, text, userID, channelID)
 	case UpdatePolkadotToLatestCmd:
-		response = b.githubHandler.HandleUpdateChain(text, userID)
+		response = b.githubHandler.HandleChainUpdate("chain", text, userID)
 	case UpdateNetworkCmd:
-		response = b.githubHandler.HandleUpdateNetwork(text, userID)
+		response = b.githubHandler.HandleChainUpdate("network", text, userID)
 	default:
 		response = &SlashCommandResponse{
 			ResponseType: "ephemeral",

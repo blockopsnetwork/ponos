@@ -81,7 +81,7 @@ func (wh *WebhookHandler) handleReleasesWebhook(w http.ResponseWriter, r *http.R
 			}()
 		}
 	} else {
-		wh.bot.logger.Info("nodeoperator agent not available, skipping processing")
+		wh.bot.logger.Info("nodeagent not available, skipping processing")
 	}
 
 	w.Header().Set("Content-Type", "application/json")

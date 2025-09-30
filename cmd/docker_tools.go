@@ -17,7 +17,6 @@ func NewDockerOperations() *DockerOperations {
 }
 
 
-// FetchLatestStableTagsMCP fetches latest stable tags using MCP client
 func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClient *GitHubMCPClient, filesToUpdate []fileInfo) (*dockerTagResult, error) {
 	imageToTag := make(map[string]string)
 
