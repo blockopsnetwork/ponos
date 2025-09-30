@@ -8,9 +8,7 @@ import (
 )
 
 type Config struct {
-	GitHubPEMKey    string `envconfig:"GITHUB_PEM_KEY" default:""`
-	GitHubAppID     int64  `envconfig:"GITHUB_APP_ID" default:"0"`
-	GitHubInstallID int64  `envconfig:"GITHUB_INSTALL_ID" default:"0"`
+	GitHubToken     string `envconfig:"GITHUB_TOKEN" default:""`
 
 	SlackToken      string `envconfig:"SLACK_TOKEN" default:""`
 	SlackSigningKey string `envconfig:"SLACK_SIGNING_SECRET" default:""`

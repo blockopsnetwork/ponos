@@ -8,8 +8,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-
-	"github.com/google/go-github/v72/github"
 )
 
 type DockerOperations struct{}
@@ -18,16 +16,14 @@ func NewDockerOperations() *DockerOperations {
 	return &DockerOperations{}
 }
 
-func (d *DockerOperations) FetchLatestStableTags(ctx context.Context, client *github.Client, filesToUpdate []fileInfo) (*dockerTagResult, error) {
+
+// FetchLatestStableTagsMCP fetches latest stable tags using MCP client
+func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClient *GitHubMCPClient, filesToUpdate []fileInfo) (*dockerTagResult, error) {
 	imageToTag := make(map[string]string)
 
 	for _, f := range filesToUpdate {
-		file, _, _, ferr := client.Repositories.GetContents(ctx, f.owner, f.repo, f.path, nil)
-		if ferr != nil || file == nil {
-			continue
-		}
-		content, cerr := file.GetContent()
-		if cerr != nil {
+		content, ferr := mcpClient.GetFileContent(ctx, f.owner, f.repo, f.path)
+		if ferr != nil {
 			continue
 		}
 		yamlOps := NewYAMLOperations()
