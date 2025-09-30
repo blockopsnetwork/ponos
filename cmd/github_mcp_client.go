@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -10,6 +11,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -25,9 +28,10 @@ type GitHubMCPClient struct {
 	installID   string
 	pemKey      string
 	botName     string
+	cachedToken   string
+	tokenExpiry   time.Time
 }
 
-// MCPRequest represents a JSON-RPC request to the MCP server
 type MCPRequest struct {
 	JSONRPC string      `json:"jsonrpc"`
 	ID      int         `json:"id"`
@@ -35,7 +39,6 @@ type MCPRequest struct {
 	Params  interface{} `json:"params"`
 }
 
-// MCPResponse represents a JSON-RPC response from the MCP server
 type MCPResponse struct {
 	JSONRPC string      `json:"jsonrpc"`
 	ID      int         `json:"id"`
@@ -43,20 +46,17 @@ type MCPResponse struct {
 	Error   *MCPError   `json:"error,omitempty"`
 }
 
-// MCPError represents an error in MCP response
 type MCPError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    interface{} `json:"data,omitempty"`
 }
 
-// ToolCallParams represents parameters for calling a tool
 type ToolCallParams struct {
 	Name      string                 `json:"name"`
 	Arguments map[string]interface{} `json:"arguments"`
 }
 
-// NewGitHubMCPClient creates a new GitHub MCP client
 func NewGitHubMCPClient(serverURL, token, appID, installID, pemKey, botName string, logger *slog.Logger) *GitHubMCPClient {
 	client := &GitHubMCPClient{
 		serverURL: serverURL,
@@ -69,7 +69,6 @@ func NewGitHubMCPClient(serverURL, token, appID, installID, pemKey, botName stri
 		botName:   botName,
 	}
 	
-	// Initialize the MCP session
 	if err := client.initialize(); err != nil {
 		logger.Error("failed to initialize MCP session", "error", err)
 	}
@@ -77,7 +76,6 @@ func NewGitHubMCPClient(serverURL, token, appID, installID, pemKey, botName stri
 	return client
 }
 
-// initialize establishes an MCP session with the server
 func (g *GitHubMCPClient) initialize() error {
 	request := MCPRequest{
 		JSONRPC: "2.0",
@@ -447,9 +445,24 @@ func (g *GitHubMCPClient) getAccessToken() (string, error) {
 		return g.token, nil
 	}
 	
-	// If we have GitHub App credentials, generate an installation access token
+	// If we have GitHub App credentials, check cache first
 	if g.appID != "" && g.installID != "" && g.pemKey != "" {
-		return g.generateInstallationToken()
+		// Check if we have a cached token that's still valid (with 5 minute buffer)
+		if g.cachedToken != "" && time.Now().Before(g.tokenExpiry.Add(-5*time.Minute)) {
+			return g.cachedToken, nil
+		}
+		
+		// Generate new token and cache it
+		token, err := g.generateInstallationToken()
+		if err != nil {
+			return "", err
+		}
+		
+		// Cache the token (GitHub App tokens are valid for 1 hour)
+		g.cachedToken = token
+		g.tokenExpiry = time.Now().Add(1 * time.Hour)
+		
+		return token, nil
 	}
 	
 	return "", fmt.Errorf("no authentication credentials provided")
@@ -457,15 +470,40 @@ func (g *GitHubMCPClient) getAccessToken() (string, error) {
 
 // generateInstallationToken creates a GitHub App installation access token
 func (g *GitHubMCPClient) generateInstallationToken() (string, error) {
-	// Parse the PEM key
-	block, _ := pem.Decode([]byte(g.pemKey))
-	if block == nil {
-		return "", fmt.Errorf("failed to parse PEM block containing the key")
+	var pemKey string
+	
+	// Check if g.pemKey is a file path or the actual PEM content
+	if strings.HasPrefix(g.pemKey, "/") || strings.HasPrefix(g.pemKey, "./") || strings.HasSuffix(g.pemKey, ".pem") {
+		// It's a file path, read the file
+		pemBytes, err := os.ReadFile(g.pemKey)
+		if err != nil {
+			return "", fmt.Errorf("failed to read PEM key file %s: %v", g.pemKey, err)
+		}
+		pemKey = string(pemBytes)
+	} else {
+		// It's the actual PEM content, handle escaped newlines
+		pemKey = strings.ReplaceAll(g.pemKey, "\\n", "\n")
 	}
 	
+	// Parse the PEM key
+	block, _ := pem.Decode([]byte(pemKey))
+	if block == nil {
+		return "", fmt.Errorf("failed to parse PEM block containing the key - check that PEM key starts with -----BEGIN and ends with -----END")
+	}
+	
+	// Try PKCS1 first, then PKCS8 if that fails
 	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse RSA private key: %v", err)
+		// Try PKCS8 format
+		parsedKey, err2 := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err2 != nil {
+			return "", fmt.Errorf("failed to parse RSA private key (tried PKCS1 and PKCS8): PKCS1 error: %v, PKCS8 error: %v", err, err2)
+		}
+		var ok bool
+		privateKey, ok = parsedKey.(*rsa.PrivateKey)
+		if !ok {
+			return "", fmt.Errorf("parsed key is not an RSA private key")
+		}
 	}
 	
 	// Create JWT claims
