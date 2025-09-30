@@ -24,6 +24,12 @@ type AgentSummary struct {
 	RiskAssessment      string   `json:"risk_assessment"`
 }
 
+type YAMLAnalysisResult struct {
+	BlockchainContainers []string `json:"blockchain_containers"`
+	Reasoning           string   `json:"reasoning"`
+	NetworkTypes        []string `json:"network_types"`
+}
+
 func NewNodeOperatorAgent(logger *slog.Logger) (*NodeOperatorAgent, error) {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
@@ -56,6 +62,88 @@ func (agent *NodeOperatorAgent) ProcessReleaseUpdate(ctx context.Context, payloa
 	return decision, nil
 }
 
+func (agent *NodeOperatorAgent) AnalyzeYAMLForBlockchainContainers(ctx context.Context, yamlContent string) ([]string, error) {
+	prompt := agent.buildYAMLAnalysisPrompt(yamlContent)
+	
+	response, err := agent.llm.Call(ctx, prompt)
+	if err != nil {
+		agent.logger.Error("LLM YAML analysis failed", "error", err)
+		return nil, err
+	}
+	
+	repos := agent.parseYAMLAnalysisResponse(response)
+	agent.logger.Info("LLM YAML analysis completed", "containers_found", len(repos))
+	
+	return repos, nil
+}
+
+func (agent *NodeOperatorAgent) buildYAMLAnalysisPrompt(yamlContent string) string {
+	return fmt.Sprintf(`You are a blockchain infrastructure expert. Analyze this Kubernetes/Docker Compose YAML file and identify ONLY the main blockchain node containers that should be updated with new versions.
+
+IMPORTANT RULES:
+1. ONLY identify containers that are actual blockchain nodes/validators/consensus clients
+2. EXCLUDE monitoring, logging, proxy, database, and utility containers
+3. Look for containers that process blockchain transactions, maintain consensus, or validate blocks
+4. Return ONLY the image repository names (without tags) that should be updated
+
+Examples of what TO include:
+- parity/polkadot (Polkadot/Kusama nodes)
+- ethereum/client-go (Ethereum Geth)
+- solanalabs/solana (Solana validators)
+- inputoutput/cardano-node (Cardano nodes)
+- cosmoshub/gaiad (Cosmos Hub)
+- Custom blockchain images that clearly run blockchain nodes
+
+Examples of what to EXCLUDE:
+- nginx, envoy (proxies)
+- postgres, redis, mysql (databases)  
+- prometheus, grafana (monitoring)
+- fluent-bit, filebeat (logging)
+- busybox, alpine (utilities)
+
+YAML Content:
+%s
+
+Return only a JSON array of image repository names (without tags) that should be updated:
+["repo1/image1", "repo2/image2"]
+
+If no blockchain containers are found, return: []`, yamlContent)
+}
+
+func (agent *NodeOperatorAgent) parseYAMLAnalysisResponse(response string) []string {
+	// Clean the response to extract JSON
+	response = strings.TrimSpace(response)
+	
+	// Find JSON array in the response
+	startIdx := strings.Index(response, "[")
+	endIdx := strings.LastIndex(response, "]")
+	
+	if startIdx == -1 || endIdx == -1 || startIdx >= endIdx {
+		agent.logger.Warn("Invalid JSON response from LLM", "response", response[:min(len(response), 200)])
+		return []string{}
+	}
+	
+	jsonStr := response[startIdx : endIdx+1]
+	
+	// Parse JSON array
+	var repos []string
+	// Simple JSON parsing for array of strings
+	jsonStr = strings.Trim(jsonStr, "[]")
+	if jsonStr == "" {
+		return []string{}
+	}
+	
+	// Split by comma and clean each repo
+	parts := strings.Split(jsonStr, ",")
+	for _, part := range parts {
+		repo := strings.Trim(strings.TrimSpace(part), `"`)
+		if repo != "" {
+			repos = append(repos, repo)
+		}
+	}
+	
+	return repos
+}
 
 func (agent *NodeOperatorAgent) parseLLMResponse(response string, payload ReleasesWebhookPayload) *AgentSummary {
 	responseLower := strings.ToLower(response)

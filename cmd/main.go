@@ -52,6 +52,7 @@ type Bot struct {
 	config        *config.Config
 	logger        *slog.Logger
 	mcpClient     *GitHubMCPClient
+	agent         *NodeOperatorAgent
 	githubHandler *GitHubDeployHandler
 }
 
@@ -86,11 +87,18 @@ func main() {
 		logger,
 	)
 
+	agent, err := NewNodeOperatorAgent(logger)
+	if err != nil {
+		logger.Warn("failed to create AI agent", "error", err)
+		agent = nil
+	}
+
 	bot := &Bot{
 		client:    api,
 		config:    cfg,
 		logger:    logger,
 		mcpClient: mcpClient,
+		agent:     agent,
 	}
 	bot.githubHandler = NewGitHubDeployHandler(bot)
 	webhookHandler := NewWebhookHandler(bot)

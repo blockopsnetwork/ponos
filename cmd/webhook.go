@@ -21,16 +21,9 @@ type WebhookHandler struct {
 }
 
 func NewWebhookHandler(bot *Bot) *WebhookHandler {
-	agent, err := NewNodeOperatorAgent(bot.logger)
-	if err != nil {
-		bot.logger.Error("failed to create AI agent", "error", err)
-		// continue without agent for now
-		agent = nil
-	}
-
 	return &WebhookHandler{
 		bot:                  bot,
-		agent:                agent,
+		agent:                bot.agent,
 		AgentFeedbackChannel: "sre-tasks", 
 	}
 }

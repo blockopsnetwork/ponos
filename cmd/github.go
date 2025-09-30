@@ -239,13 +239,13 @@ func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req Netwo
 			if ferr != nil {
 				continue
 			}
-			images := h.yaml.ExtractImageReposFromYAML(content)
+			images := h.extractImageReposWithLLM(ctx, content)
 			for _, img := range images {
 				imageToTag[img] = req.ReleaseTag
 			}
 		}
 	} else {
-		dockerResult, err := h.docker.FetchLatestStableTagsMCP(ctx, h.mcpClient, filesToUpdate)
+		dockerResult, err := h.docker.FetchLatestStableTagsMCP(ctx, h.mcpClient, h.bot.agent, filesToUpdate)
 		if err != nil {
 			return result, err
 		}
@@ -406,4 +406,20 @@ func (h *GitHubDeployHandler) createCommitFromFilesMCP(ctx context.Context, owne
 	}
 
 	return h.mcpClient.CreateCommit(ctx, owner, repo, branch, commitMsg, files)
+}
+
+func (h *GitHubDeployHandler) extractImageReposWithLLM(ctx context.Context, yamlContent string) []string {
+	if h.bot.agent != nil {
+		if llmRepos, err := h.bot.agent.AnalyzeYAMLForBlockchainContainers(ctx, yamlContent); err == nil && len(llmRepos) > 0 {
+			h.bot.logger.Info("Using LLM analysis for image extraction", "repos_found", len(llmRepos))
+			return llmRepos
+		} else if err != nil {
+			h.bot.logger.Warn("LLM analysis failed, falling back to pattern matching", "error", err)
+		} else {
+			h.bot.logger.Info("LLM found no blockchain containers, falling back to pattern matching")
+		}
+	}
+	
+	h.bot.logger.Info("Using pattern matching for image extraction")
+	return h.yaml.ExtractImageReposFromYAML(yamlContent)
 }

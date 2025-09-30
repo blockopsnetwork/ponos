@@ -17,7 +17,7 @@ func NewDockerOperations() *DockerOperations {
 }
 
 
-func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClient *GitHubMCPClient, filesToUpdate []fileInfo) (*dockerTagResult, error) {
+func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClient *GitHubMCPClient, agent *NodeOperatorAgent, filesToUpdate []fileInfo) (*dockerTagResult, error) {
 	imageToTag := make(map[string]string)
 
 	for _, f := range filesToUpdate {
@@ -25,8 +25,7 @@ func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClie
 		if ferr != nil {
 			continue
 		}
-		yamlOps := NewYAMLOperations()
-		images := yamlOps.ExtractImageReposFromYAML(content)
+		images := d.extractImageReposWithLLM(ctx, agent, content)
 		for _, img := range images {
 			imageToTag[img] = ""
 		}
@@ -116,4 +115,15 @@ func (d *DockerOperations) compareStableTags(tag1, tag2 string) bool {
 	}
 
 	return len(nums1) < len(nums2)
+}
+
+func (d *DockerOperations) extractImageReposWithLLM(ctx context.Context, agent *NodeOperatorAgent, yamlContent string) []string {
+	if agent != nil {
+		if llmRepos, err := agent.AnalyzeYAMLForBlockchainContainers(ctx, yamlContent); err == nil && len(llmRepos) > 0 {
+			return llmRepos
+		}
+	}
+	
+	yamlOps := NewYAMLOperations()
+	return yamlOps.ExtractImageReposFromYAML(yamlContent)
 }
