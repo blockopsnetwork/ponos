@@ -6,7 +6,23 @@ projects:
     name: blockops-sre
     branch: main
     paths:
-      - k8s/assethub-polkadot-replica/sts.yml
-      - k8s/blockops-polkadot-archive/statefulset.yaml
-      - k8s/blockops-assethub-polkadot/sts.yml
+      - k8s/argocd-deployments/manifests/fullnodes/polkadot-archive.yml
 
+  - network: polkadot
+    owner: blockops-sh
+    name: blockops-sre
+    branch: main
+    paths:
+      - k8s/argocd-deployments/manifests/fullnodes/polkadot-kusama-rpc.yml
+
+  - network: polkadot
+    owner: blockops-sh
+    name: blockops-sre
+    branch: main 
+    paths:
+      - k8s/argocd-deployments/manifests/fullnodes/polkadot-archive-sec-test.yml
+
+
+  
+
+  
