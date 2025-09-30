@@ -95,20 +95,9 @@ type NetworkUpdateResult struct {
 
 
 func NewGitHubDeployHandler(bot *Bot) *GitHubDeployHandler {
-	// Initialize MCP client for GitHub operations
-	mcpClient := NewGitHubMCPClient(
-		"https://api.githubcopilot.com/mcp/",
-		bot.config.GitHubToken,
-		bot.config.GitHubAppID,
-		bot.config.GitHubInstallID,
-		bot.config.GitHubPEMKey,
-		bot.config.GitHubBotName,
-		bot.logger,
-	)
-
 	return &GitHubDeployHandler{
 		bot:       bot,
-		mcpClient: mcpClient,
+		mcpClient: bot.mcpClient,
 		docker:    NewDockerOperations(),
 		yaml:     NewYAMLOperations(),
 		repoConfigs: map[string]RepoConfig{
@@ -155,7 +144,6 @@ func (h *GitHubDeployHandler) HandleDeploy(command, text, userID, channelID stri
 }
 
 func (h *GitHubDeployHandler) startDeployment(service, branch, environment, userID, channelID string) {
-	// For now, just simulate deployment success
 	blocks := createSuccessBlocks("Deployment completed!",
 		fmt.Sprintf("*Service:* %s\n*Branch:* %s\n*Environment:* %s\n*Deployed by:* <@%s>",
 			service, branch, environment, userID))
@@ -170,95 +158,43 @@ func (h *GitHubDeployHandler) HandleChainUpdate(updateType, text, userID string)
 	if len(params) != 1 {
 		return &SlashCommandResponse{
 			ResponseType: "ephemeral",
-			Text:         fmt.Sprintf("Usage: /%s <chain>. Only 'polkadot' is supported.", updateType),
+			Text:         fmt.Sprintf("Usage: /%s <network>", updateType),
 		}
 	}
-	chain := strings.ToLower(params[0])
-	if chain != "polkadot" {
-		go h.notifyUpdateChainError("rpc-updates", chain, userID)
-		return &SlashCommandResponse{
-			ResponseType: "ephemeral",
-			Text:         "Only 'polkadot' is supported for now.",
-		}
-	}
+	network := strings.ToLower(params[0])
 
-	switch updateType {
-	case "update-chain":
-		go h.startPolkadotUpdate(userID)
-	case "update-network":
-		go h.startNetworkUpdate(userID)
-	default:
-		return &SlashCommandResponse{
-			ResponseType: "ephemeral",
-			Text:         "Unsupported update type.",
-		}
-	}
+	go h.startNetworkUpdate(network, updateType, userID)
 
 	return &SlashCommandResponse{
 		ResponseType: "in_channel",
-		Blocks:       createUpdateStartBlocks(chain, userID),
+		Blocks:       createUpdateStartBlocks(network, userID),
 	}
 }
 
-func (h *GitHubDeployHandler) HandleUpdateChain(text, userID string) *SlashCommandResponse {
-	return h.HandleChainUpdate("update-chain", text, userID)
-}
 
-func (h *GitHubDeployHandler) HandleUpdateNetwork(text, userID string) *SlashCommandResponse {
-	return h.HandleChainUpdate("update-network", text, userID)
-}
-
-func (h *GitHubDeployHandler) startPolkadotUpdate(userID string) {
+func (h *GitHubDeployHandler) startNetworkUpdate(network, updateType, userID string) {
 	ctx := context.Background()
 	req := NetworkUpdateRequest{
-		DetectedNetworks: []string{"polkadot"},
+		DetectedNetworks: []string{network},
 		ReleaseTag:       "",
-		CommitMessage:    "ponos: update polkadot image tags to latest stable",
-		PRTitle:          "Update polkadot image tags to latest stable",
-		PRBody:           "Automated update of polkadot Docker image tags to latest stable versions.",
-		BranchPrefix:     "ponos/update-polkadot",
+		CommitMessage:    fmt.Sprintf("ponos: update %s image tags to latest stable", network),
+		PRTitle:          fmt.Sprintf("Update %s image tags to latest stable", network),
+		PRBody:           fmt.Sprintf("Automated update of %s Docker image tags to latest stable versions.", network),
+		BranchPrefix:     fmt.Sprintf("ponos/update-%s", network),
 	}
 
 	result, err := h.updateNetworkImages(ctx, req)
 	if err != nil {
-		h.notifyError("rpc-updates", fmt.Sprintf("Polkadot update failed: %v", err))
+		h.notifyError(h.bot.config.SlackUpdateChannel, fmt.Sprintf("%s update failed: %v", strings.ToUpper(network[:1])+network[1:], err))
 		return
 	}
 
-	// Send success notification
-	blocks := createSuccessBlocks("Polkadot update completed!",
+	blocks := createSuccessBlocks(fmt.Sprintf("%s update completed!", strings.ToUpper(network[:1])+network[1:]),
 		fmt.Sprintf("*Pull Request:* <%s|View PR>\n*Commit:* <%s|View Commit>",
 			result.PRUrl, result.CommitURL))
 
-	if _, _, err := h.bot.client.PostMessage("rpc-updates", slack.MsgOptionBlocks(blocks...)); err != nil {
-		h.bot.logger.Error("failed to send polkadot update success message", "error", err)
-	}
-}
-
-func (h *GitHubDeployHandler) startNetworkUpdate(userID string) {
-	ctx := context.Background()
-	req := NetworkUpdateRequest{
-		DetectedNetworks: []string{"polkadot"},
-		ReleaseTag:       "",
-		CommitMessage:    "ponos: update all network image tags to latest stable",
-		PRTitle:          "Update network image tags to latest stable",
-		PRBody:           "Automated update of network Docker image tags to latest stable versions.",
-		BranchPrefix:     "ponos/update-network",
-	}
-
-	result, err := h.updateNetworkImages(ctx, req)
-	if err != nil {
-		h.notifyError("rpc-updates", fmt.Sprintf("Network update failed: %v", err))
-		return
-	}
-
-	// Send success notification
-	blocks := createSuccessBlocks("Network update completed!",
-		fmt.Sprintf("*Pull Request:* <%s|View PR>\n*Commit:* <%s|View Commit>",
-			result.PRUrl, result.CommitURL))
-
-	if _, _, err := h.bot.client.PostMessage("rpc-updates", slack.MsgOptionBlocks(blocks...)); err != nil {
-		h.bot.logger.Error("failed to send network update success message", "error", err)
+	if _, _, err := h.bot.client.PostMessage(h.bot.config.SlackUpdateChannel, slack.MsgOptionBlocks(blocks...)); err != nil {
+		h.bot.logger.Error("failed to send update success message", "error", err, "network", network)
 	}
 }
 
@@ -295,8 +231,6 @@ func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req Netwo
 		}
 	}
 
-	// No need to create client - using MCP directly
-
 	imageToTag := make(map[string]string)
 
 	if req.ReleaseTag != "" {
@@ -330,20 +264,17 @@ func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req Netwo
 	owner := filesToCommit[0].owner
 	repo := filesToCommit[0].repo
 
-	// Create branch from main first
 	branchName := fmt.Sprintf("%s-%d", req.BranchPrefix, time.Now().Unix())
 	err = h.mcpClient.CreateBranch(ctx, owner, repo, branchName)
 	if err != nil {
 		return result, fmt.Errorf("failed to create branch: %v", err)
 	}
 
-	// Create commit on the new branch
 	commitSHA, err := h.createCommitFromFilesMCP(ctx, owner, repo, branchName, filesToCommit, req.CommitMessage)
 	if err != nil {
 		return result, err
 	}
 
-	// Create PR from branch to main
 	prURL, err := h.mcpClient.CreatePullRequest(ctx, owner, repo, branchName, "main", req.PRTitle, req.PRBody)
 	if err != nil {
 		return result, err
@@ -391,16 +322,7 @@ func (h *GitHubDeployHandler) notifyError(channelID, message string) {
 	}
 }
 
-func (h *GitHubDeployHandler) notifyUpdateChainError(channelID, chain, userID string) {
-	blocks := createErrorBlocks("Update failed",
-		fmt.Sprintf("Chain '%s' is not supported. Only 'polkadot' is allowed.\nRequested by: <@%s>", chain, userID))
-	_, _, err := h.bot.client.PostMessage(channelID, slack.MsgOptionBlocks(blocks...))
-	if err != nil {
-		h.bot.logger.Error("failed to send update chain error message", "error", err, "channel", channelID, "chain", chain)
-	}
-}
 
-// prepareFileUpdatesMCP prepares file updates using MCP to get file contents
 func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesToUpdate []fileInfo, imageToTag map[string]string) ([]fileCommitData, []imageUpgrade, error) {
 	var filesToCommit []fileCommitData
 	var upgrades []imageUpgrade
@@ -466,7 +388,7 @@ func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesTo
 			owner:   f.owner,
 			repo:    f.repo,
 			path:    f.path,
-			sha:     "", // MCP handles SHA automatically
+			sha:     "",
 			newYAML: newYAML,
 		})
 	}
@@ -474,9 +396,7 @@ func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesTo
 	return filesToCommit, upgrades, nil
 }
 
-// createCommitFromFilesMCP creates a commit with multiple file changes using MCP
 func (h *GitHubDeployHandler) createCommitFromFilesMCP(ctx context.Context, owner, repo, branch string, filesToCommit []fileCommitData, commitMsg string) (string, error) {
-	// Convert fileCommitData to FileUpdate format for MCP
 	var files []FileUpdate
 	for _, f := range filesToCommit {
 		files = append(files, FileUpdate{

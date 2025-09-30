@@ -13,19 +13,18 @@ func NewYAMLOperations() *YAMLOperations {
 }
 
 func (y *YAMLOperations) ExtractImageReposFromYAML(yamlContent string) []string {
-	mainRepos := y.ExtractMainApplicationRepos(yamlContent)
-	if len(mainRepos) > 0 {
-		return mainRepos
-	}
-	
-	// Fallback to extracting all repos if we can't identify main containers
+	return y.ExtractMainApplicationRepos(yamlContent)
+}
+
+func (y *YAMLOperations) ExtractMainApplicationRepos(yamlContent string) []string {
 	var root yaml.Node
-	err := yaml.Unmarshal([]byte(yamlContent), &root)
-	if err != nil {
+	if yaml.Unmarshal([]byte(yamlContent), &root) != nil {
 		return nil
 	}
+
 	var repos []string
 	repoSet := make(map[string]bool)
+	
 	var walk func(n *yaml.Node)
 	walk = func(n *yaml.Node) {
 		if n == nil {
@@ -33,17 +32,16 @@ func (y *YAMLOperations) ExtractImageReposFromYAML(yamlContent string) []string 
 		}
 		switch n.Kind {
 		case yaml.MappingNode:
+			var containerName string
 			for i := 0; i < len(n.Content)-1; i += 2 {
-				key := n.Content[i]
-				val := n.Content[i+1]
-				if key.Value == "image" && val.Kind == yaml.ScalarNode {
-					img := val.Value
-					if idx := strings.Index(img, ":"); idx > 0 {
-						repo := img[:idx]
-						if !repoSet[repo] {
-							repos = append(repos, repo)
-							repoSet[repo] = true
-						}
+				key, val := n.Content[i], n.Content[i+1]
+				if key.Value == "name" && val.Kind == yaml.ScalarNode {
+					containerName = val.Value
+				} else if key.Value == "image" {
+					repo := y.extractRepo(val)
+					if repo != "" && y.IsMainContainer(containerName, repo) && !repoSet[repo] {
+						repos = append(repos, repo)
+						repoSet[repo] = true
 					}
 				}
 				walk(val)
@@ -54,6 +52,7 @@ func (y *YAMLOperations) ExtractImageReposFromYAML(yamlContent string) []string 
 			}
 		}
 	}
+
 	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
 		walk(root.Content[0])
 	} else {
@@ -62,142 +61,60 @@ func (y *YAMLOperations) ExtractImageReposFromYAML(yamlContent string) []string 
 	return repos
 }
 
-func (y *YAMLOperations) ExtractMainApplicationRepos(yamlContent string) []string {
-	var root yaml.Node
-	err := yaml.Unmarshal([]byte(yamlContent), &root)
-	if err != nil {
-		return nil
-	}
-
-	var mainRepos []string
-	repoSet := make(map[string]bool)
-	
-	var walk func(n *yaml.Node, depth int)
-	walk = func(n *yaml.Node, depth int) {
-		if n == nil {
-			return
+func (y *YAMLOperations) extractRepo(node *yaml.Node) string {
+	if node.Kind == yaml.ScalarNode {
+		if idx := strings.Index(node.Value, ":"); idx > 0 {
+			return node.Value[:idx]
 		}
-
-		switch n.Kind {
-		case yaml.MappingNode:
-			var currentContainerName string
-			
-			for i := 0; i < len(n.Content)-1; i += 2 {
-				key := n.Content[i]
-				val := n.Content[i+1]
-				
-				if key.Value == "name" && val.Kind == yaml.ScalarNode {
-					currentContainerName = val.Value
-				}
-				
-				if key.Value == "image" {
-					if val.Kind == yaml.ScalarNode {
-						img := val.Value
-						if idx := strings.Index(img, ":"); idx > 0 {
-							repo := img[:idx]
-							isMain := y.IsMainContainer(currentContainerName, repo)
-							if isMain && !repoSet[repo] {
-								mainRepos = append(mainRepos, repo)
-								repoSet[repo] = true
-							}
-						}
-					} else if val.Kind == yaml.MappingNode {
-						var repo string
-						for j := 0; j < len(val.Content)-1; j += 2 {
-							subKey := val.Content[j]
-							subVal := val.Content[j+1]
-							if subKey.Value == "repo" && subVal.Kind == yaml.ScalarNode {
-								repo = subVal.Value
-								break
-							}
-						}
-						if repo != "" {
-							isMain := y.IsMainContainer(currentContainerName, repo)
-							if isMain && !repoSet[repo] {
-								mainRepos = append(mainRepos, repo)
-								repoSet[repo] = true
-							}
-						}
-					}
-				}
-				
-				walk(val, depth+1)
-			}
-			
-		case yaml.SequenceNode:
-			for _, item := range n.Content {
-				walk(item, depth+1)
+	} else if node.Kind == yaml.MappingNode {
+		for i := 0; i < len(node.Content)-1; i += 2 {
+			if node.Content[i].Value == "repo" && node.Content[i+1].Kind == yaml.ScalarNode {
+				return node.Content[i+1].Value
 			}
 		}
 	}
-
-	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
-		walk(root.Content[0], 0)
-	} else {
-		walk(&root, 0)
-	}
-
-	return mainRepos
+	return ""
 }
 
 func (y *YAMLOperations) IsMainContainer(containerName, imageRepo string) bool {
 	containerName = strings.ToLower(containerName)
 	imageRepo = strings.ToLower(imageRepo)
 	
-	// Known blockchain node repositories that should be updated
 	knownMainRepos := map[string]bool{
-		"parity/polkadot":     true,
-		"parity/kusama":       true,
+		"parity/polkadot": true,
 		"paritytech/polkadot": true,
-		"paritytech/kusama":   true,
-		"ethereum/client-go":  true,
-		"hyperledger/fabric":  true,
+		"ethereum/client-go": true,
+		"hyperledger/fabric": true,
 	}
-	
 	if knownMainRepos[imageRepo] {
 		return true
 	}
-	
-	// Sidecar/utility containers that should NOT be updated
+
 	sidecarPatterns := []string{
-		"filebeat", "fluentd", "logstash", "fluent-bit",
-		"prometheus", "grafana", "jaeger", "zipkin", 
-		"nginx", "envoy", "istio", "linkerd",
-		"vault", "consul", "redis", "memcached",
-		"postgres", "mysql", "mongodb",
-		"busybox", "alpine", "ubuntu", "centos",
-		"pause", "k8s.gcr.io/pause",
-		"cloudflare", "certbot",
+		"filebeat", "fluentd", "prometheus", "grafana", "nginx", "envoy",
+		"vault", "redis", "postgres", "mysql", "busybox", "alpine", "pause",
 	}
-	
 	for _, pattern := range sidecarPatterns {
 		if strings.Contains(imageRepo, pattern) || strings.Contains(containerName, pattern) {
 			return false
 		}
 	}
-	
-	// Check if container name suggests it's a main application
-	mainContainerPatterns := []string{
-		"polkadot", "kusama", "node", "validator", "archive",
-		"ethereum", "geth", "consensus", "execution",
-	}
-	
-	for _, pattern := range mainContainerPatterns {
+
+	mainPatterns := []string{"polkadot", "kusama", "node", "validator", "ethereum", "geth"}
+	for _, pattern := range mainPatterns {
 		if strings.Contains(containerName, pattern) || strings.Contains(imageRepo, pattern) {
 			return true
 		}
 	}
-	
-	// Default to false for safety - only update containers we're confident about
 	return false
 }
 
 func (y *YAMLOperations) UpdateAllImageTagsYAML(yamlContent string, repoToTag map[string]string) (string, bool, error) {
 	var root yaml.Node
-	err := yaml.Unmarshal([]byte(yamlContent), &root)
-	if err != nil {
+	if err := yaml.Unmarshal([]byte(yamlContent), &root); err != nil {
 		return "", false, err
 	}
+	
 	var updated bool
 	var walk func(n *yaml.Node)
 	walk = func(n *yaml.Node) {
@@ -207,50 +124,12 @@ func (y *YAMLOperations) UpdateAllImageTagsYAML(yamlContent string, repoToTag ma
 		switch n.Kind {
 		case yaml.MappingNode:
 			for i := 0; i < len(n.Content)-1; i += 2 {
-				key := n.Content[i]
-				val := n.Content[i+1]
-				
-				if key.Value == "image" {
-					if val.Kind == yaml.ScalarNode {
-						// Handle simple format: image: "parity/polkadot:stable2503-9"
-						img := val.Value
-						if idx := strings.Index(img, ":"); idx > 0 {
-							repo := img[:idx]
-							if tag, ok := repoToTag[repo]; ok {
-								newVal := repo + ":" + tag
-								if val.Value != newVal {
-									val.Value = newVal
-									updated = true
-								}
-							}
-						}
-					} else if val.Kind == yaml.MappingNode {
-						// Handle mapped format: image: { repo: parity/polkadot, tag: stable2503-9 }
-						var repo, currentTag string
-						var tagNode *yaml.Node
-						
-						// Find repo and tag fields
-						for j := 0; j < len(val.Content)-1; j += 2 {
-							subKey := val.Content[j]
-							subVal := val.Content[j+1]
-							if subKey.Value == "repo" && subVal.Kind == yaml.ScalarNode {
-								repo = subVal.Value
-							} else if subKey.Value == "tag" && subVal.Kind == yaml.ScalarNode {
-								currentTag = subVal.Value
-								tagNode = subVal
-							}
-						}
-						
-						// Update tag if we have a new one for this repo
-						if repo != "" && tagNode != nil {
-							if newTag, ok := repoToTag[repo]; ok && newTag != currentTag {
-								tagNode.Value = newTag
-								updated = true
-							}
-						}
+				if n.Content[i].Value == "image" {
+					if y.updateImageNode(n.Content[i+1], repoToTag) {
+						updated = true
 					}
 				}
-				walk(val)
+				walk(n.Content[i+1])
 			}
 		case yaml.SequenceNode:
 			for _, item := range n.Content {
@@ -258,21 +137,55 @@ func (y *YAMLOperations) UpdateAllImageTagsYAML(yamlContent string, repoToTag ma
 			}
 		}
 	}
+	
 	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
 		walk(root.Content[0])
 	} else {
 		walk(&root)
 	}
+	
 	if !updated {
 		return yamlContent, false, nil
 	}
+	
 	var b strings.Builder
 	encoder := yaml.NewEncoder(&b)
 	encoder.SetIndent(2)
 	defer encoder.Close()
-	err = encoder.Encode(&root)
-	if err != nil {
+	if err := encoder.Encode(&root); err != nil {
 		return "", false, err
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n", true, nil
+}
+
+func (y *YAMLOperations) updateImageNode(node *yaml.Node, repoToTag map[string]string) bool {
+	if node.Kind == yaml.ScalarNode {
+		if idx := strings.Index(node.Value, ":"); idx > 0 {
+			repo := node.Value[:idx]
+			if tag, ok := repoToTag[repo]; ok {
+				newVal := repo + ":" + tag
+				if node.Value != newVal {
+					node.Value = newVal
+					return true
+				}
+			}
+		}
+	} else if node.Kind == yaml.MappingNode {
+		var repo string
+		var tagNode *yaml.Node
+		for i := 0; i < len(node.Content)-1; i += 2 {
+			if node.Content[i].Value == "repo" && node.Content[i+1].Kind == yaml.ScalarNode {
+				repo = node.Content[i+1].Value
+			} else if node.Content[i].Value == "tag" && node.Content[i+1].Kind == yaml.ScalarNode {
+				tagNode = node.Content[i+1]
+			}
+		}
+		if repo != "" && tagNode != nil {
+			if newTag, ok := repoToTag[repo]; ok && newTag != tagNode.Value {
+				tagNode.Value = newTag
+				return true
+			}
+		}
+	}
+	return false
 }
