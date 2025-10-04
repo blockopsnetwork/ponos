@@ -142,7 +142,15 @@ func main() {
 }
 
 func runAgentTUI() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	// In TUI mode, redirect logs to a file to avoid interfering with the interface
+	var logger *slog.Logger
+	logFile, err := os.OpenFile("/tmp/ponos-tui.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		// If we can't create log file, use a discard logger
+		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	} else {
+		logger = slog.New(slog.NewJSONHandler(logFile, nil))
+	}
 	slog.SetDefault(logger)
 
 	cfg, err := config.Load()
