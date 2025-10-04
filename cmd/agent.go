@@ -204,3 +204,133 @@ func (agent *NodeOperatorAgent) extractSection(text, startSection, endSection st
 	content := strings.TrimSpace(text[startIdx : startIdx+endIdx])
 	return content
 }
+
+// ConversationResponse represents a streaming response from the AI agent
+type ConversationResponse struct {
+	Content   string
+	Finished  bool
+	Error     error
+}
+
+// ProcessConversation handles general conversation with the AI agent
+func (agent *NodeOperatorAgent) ProcessConversation(ctx context.Context, userMessage string) (*ConversationResponse, error) {
+	agent.logger.Info("ProcessConversation called", "message", userMessage)
+	
+	prompt := agent.buildConversationPrompt(userMessage)
+	agent.logger.Info("Built conversation prompt", "prompt_length", len(prompt))
+	
+	agent.logger.Info("Making LLM call")
+	response, err := agent.llm.Call(ctx, prompt)
+	if err != nil {
+		agent.logger.Error("AI conversation failed", "error", err)
+		return &ConversationResponse{
+			Error: err,
+			Finished: true,
+		}, err
+	}
+	
+	agent.logger.Info("LLM call successful", "response_length", len(response))
+	return &ConversationResponse{
+		Content:  response,
+		Finished: true,
+	}, nil
+}
+
+// buildConversationPrompt creates a prompt for general conversation with blockchain context
+func (agent *NodeOperatorAgent) buildConversationPrompt(userMessage string) string {
+	return fmt.Sprintf(`You are Ponos, an AI blockchain operations assistant. You specialize in:
+
+🔗 BLOCKCHAIN NETWORK MANAGEMENT:
+- Upgrading Polkadot, Kusama, and other networks
+- Managing Kubernetes deployment manifests  
+- Automating GitHub pull request workflows
+- Monitoring network upgrade progress
+
+💻 CURRENT CAPABILITIES:
+- Automated chain upgrades via existing ponos infrastructure
+- GitHub integration for manifest updates
+- Slack notifications for upgrade status
+- Real-time progress tracking
+
+📋 CONVERSATION GUIDELINES:
+- Respond conversationally and helpfully
+- Keep blockchain operations as your specialty context
+- For upgrade requests, explain what you can do and ask for specifics
+- For general questions, answer while highlighting your blockchain expertise
+- Be concise but informative
+- Use appropriate emojis sparingly
+
+User Message: %s
+
+Response:`, userMessage)
+}
+
+// ParseUpgradeIntent analyzes user input for blockchain upgrade intentions
+func (agent *NodeOperatorAgent) ParseUpgradeIntent(ctx context.Context, userMessage string) (*UpgradeIntent, error) {
+	prompt := fmt.Sprintf(`Analyze this user message for blockchain network upgrade intentions.
+
+User Message: "%s"
+
+Respond with JSON in this exact format:
+{
+  "requires_action": true/false,
+  "network": "polkadot|kusama|ethereum|solana|other|unknown",
+  "action_type": "upgrade|update|deploy|status|none",
+  "confidence": "high|medium|low",
+  "explanation": "brief explanation of what the user wants"
+}
+
+Guidelines:
+- Set requires_action=true only if user clearly wants to upgrade/update a blockchain network
+- Detect network from keywords like "polkadot", "kusama", "dot", "ksm", etc.
+- Set confidence based on clarity of the request
+- For greetings, questions, or general chat: requires_action=false`, userMessage)
+	
+	response, err := agent.llm.Call(ctx, prompt)
+	if err != nil {
+		return nil, err
+	}
+	
+	return agent.parseUpgradeIntentResponse(response), nil
+}
+
+type UpgradeIntent struct {
+	RequiresAction bool   `json:"requires_action"`
+	Network        string `json:"network"`
+	ActionType     string `json:"action_type"`
+	Confidence     string `json:"confidence"`
+	Explanation    string `json:"explanation"`
+}
+
+func (agent *NodeOperatorAgent) parseUpgradeIntentResponse(response string) *UpgradeIntent {
+	// Simple JSON parsing - in production would use proper JSON unmarshaling
+	intent := &UpgradeIntent{
+		RequiresAction: false,
+		Network:        "unknown",
+		ActionType:     "none",
+		Confidence:     "low",
+		Explanation:    "Unable to parse response",
+	}
+	
+	// Basic parsing for demo - would be more robust in production
+	responseLower := strings.ToLower(response)
+	if strings.Contains(responseLower, `"requires_action": true`) {
+		intent.RequiresAction = true
+	}
+	
+	// Extract network
+	if strings.Contains(responseLower, `"network": "polkadot"`) {
+		intent.Network = "polkadot"
+	} else if strings.Contains(responseLower, `"network": "kusama"`) {
+		intent.Network = "kusama"
+	}
+	
+	// Extract action type
+	if strings.Contains(responseLower, `"action_type": "upgrade"`) {
+		intent.ActionType = "upgrade"
+	} else if strings.Contains(responseLower, `"action_type": "update"`) {
+		intent.ActionType = "update"
+	}
+	
+	return intent
+}
