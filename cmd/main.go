@@ -59,6 +59,12 @@ type Bot struct {
 func main() {
 	flag.Parse()
 
+	// Check for TUI mode
+	if len(os.Args) > 1 && os.Args[1] == "tui" {
+		runAgentTUI()
+		return
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
@@ -133,6 +139,63 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		logger.Error("error during server shutdown", "error", err)
 	}
+}
+
+func runAgentTUI() {
+	// In TUI mode, redirect logs to a file to avoid interfering with the interface
+	var logger *slog.Logger
+	logFile, err := os.OpenFile("/tmp/ponos-tui.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		// If we can't create log file, use a discard logger
+		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	} else {
+		logger = slog.New(slog.NewJSONHandler(logFile, nil))
+	}
+	slog.SetDefault(logger)
+
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("failed to load configuration", "error", err)
+		os.Exit(1)
+	}
+	
+	// Validate GitHub bot configuration
+	if err := cfg.ValidateGitHubBotConfig(); err != nil {
+		logger.Error("GitHub bot configuration error", "error", err)
+		logger.Info("See config/config.go for setup instructions")
+		os.Exit(1)
+	}
+
+	api := slack.New(cfg.SlackToken)
+
+	mcpClient := NewGitHubMCPClient(
+		"https://api.githubcopilot.com/mcp/",
+		cfg.GitHubToken,
+		cfg.GitHubAppID,
+		cfg.GitHubInstallID,
+		cfg.GitHubPEMKey,
+		cfg.GitHubBotName,
+		logger,
+	)
+
+	agent, err := NewNodeOperatorAgent(logger)
+	if err != nil {
+		logger.Error("failed to create AI agent", "error", err)
+		os.Exit(1)
+	}
+
+	bot := &Bot{
+		client:    api,
+		config:    cfg,
+		logger:    logger,
+		mcpClient: mcpClient,
+		agent:     agent,
+	}
+	bot.githubHandler = NewGitHubDeployHandler(bot)
+
+	// Start TUI agent interface
+	tui := NewPonosAgentTUI(bot, logger)
+	tui.Start()
 }
 
 func (b *Bot) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
