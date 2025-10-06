@@ -59,13 +59,11 @@ type Bot struct {
 func main() {
 	flag.Parse()
 
-	// Check for server mode
 	if len(os.Args) > 1 && os.Args[1] == "server" {
 		runServer()
 		return
 	}
 
-	// Default: Run TUI mode
 	runAgentTUI()
 }
 
