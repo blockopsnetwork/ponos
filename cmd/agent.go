@@ -111,10 +111,8 @@ If no blockchain containers are found, return: []`, yamlContent)
 }
 
 func (agent *NodeOperatorAgent) parseYAMLAnalysisResponse(response string) []string {
-	// Clean the response to extract JSON
 	response = strings.TrimSpace(response)
 	
-	// Find JSON array in the response
 	startIdx := strings.Index(response, "[")
 	endIdx := strings.LastIndex(response, "]")
 	
@@ -125,15 +123,12 @@ func (agent *NodeOperatorAgent) parseYAMLAnalysisResponse(response string) []str
 	
 	jsonStr := response[startIdx : endIdx+1]
 	
-	// Parse JSON array
 	var repos []string
-	// Simple JSON parsing for array of strings
 	jsonStr = strings.Trim(jsonStr, "[]")
 	if jsonStr == "" {
 		return []string{}
 	}
 	
-	// Split by comma and clean each repo
 	parts := strings.Split(jsonStr, ",")
 	for _, part := range parts {
 		repo := strings.Trim(strings.TrimSpace(part), `"`)
@@ -205,14 +200,12 @@ func (agent *NodeOperatorAgent) extractSection(text, startSection, endSection st
 	return content
 }
 
-// ConversationResponse represents a streaming response from the AI agent
 type ConversationResponse struct {
 	Content   string
 	Finished  bool
 	Error     error
 }
 
-// ProcessConversation handles general conversation with the AI agent
 func (agent *NodeOperatorAgent) ProcessConversation(ctx context.Context, userMessage string) (*ConversationResponse, error) {
 	agent.logger.Info("ProcessConversation called", "message", userMessage)
 	
@@ -236,7 +229,6 @@ func (agent *NodeOperatorAgent) ProcessConversation(ctx context.Context, userMes
 	}, nil
 }
 
-// buildConversationPrompt creates a prompt for general conversation with blockchain context
 func (agent *NodeOperatorAgent) buildConversationPrompt(userMessage string) string {
 	return fmt.Sprintf(`You are Ponos, an AI blockchain operations assistant. You specialize in:
 
@@ -265,7 +257,6 @@ User Message: %s
 Response:`, userMessage)
 }
 
-// ParseUpgradeIntent analyzes user input for blockchain upgrade intentions
 func (agent *NodeOperatorAgent) ParseUpgradeIntent(ctx context.Context, userMessage string) (*UpgradeIntent, error) {
 	prompt := fmt.Sprintf(`Analyze this user message for blockchain network upgrade intentions.
 
@@ -303,7 +294,6 @@ type UpgradeIntent struct {
 }
 
 func (agent *NodeOperatorAgent) parseUpgradeIntentResponse(response string) *UpgradeIntent {
-	// Simple JSON parsing - in production would use proper JSON unmarshaling
 	intent := &UpgradeIntent{
 		RequiresAction: false,
 		Network:        "unknown",
@@ -312,20 +302,17 @@ func (agent *NodeOperatorAgent) parseUpgradeIntentResponse(response string) *Upg
 		Explanation:    "Unable to parse response",
 	}
 	
-	// Basic parsing for demo - would be more robust in production
 	responseLower := strings.ToLower(response)
 	if strings.Contains(responseLower, `"requires_action": true`) {
 		intent.RequiresAction = true
 	}
 	
-	// Extract network
 	if strings.Contains(responseLower, `"network": "polkadot"`) {
 		intent.Network = "polkadot"
 	} else if strings.Contains(responseLower, `"network": "kusama"`) {
 		intent.Network = "kusama"
 	}
 	
-	// Extract action type
 	if strings.Contains(responseLower, `"action_type": "upgrade"`) {
 		intent.ActionType = "upgrade"
 	} else if strings.Contains(responseLower, `"action_type": "update"`) {

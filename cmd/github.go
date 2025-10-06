@@ -342,7 +342,7 @@ func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesTo
 			continue
 		}
 
-		// Track upgrades for reporting
+		// Trac upgrades for reporting
 		var oldToNew []imageUpgrade
 		var root yaml.Node
 		if yaml.Unmarshal([]byte(content), &root) == nil {
