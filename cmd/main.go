@@ -59,7 +59,7 @@ type Bot struct {
 func main() {
 	flag.Parse()
 
-	if len(os.Args) > 1 && os.Args[1] == "server" {
+	if len(os.Args) > 1 && os.Args[1] == "--server" {
 		runServer()
 		return
 	}
