@@ -59,12 +59,15 @@ type Bot struct {
 func main() {
 	flag.Parse()
 
-	// Check for TUI mode
-	if len(os.Args) > 1 && os.Args[1] == "tui" {
-		runAgentTUI()
+	if len(os.Args) > 1 && os.Args[1] == "server" {
+		runServer()
 		return
 	}
 
+	runAgentTUI()
+}
+
+func runServer() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
