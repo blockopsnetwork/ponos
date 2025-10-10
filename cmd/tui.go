@@ -559,9 +559,9 @@ func (tui *PonosAgentTUI) getHelpText() string {
 /status - Show current setup status
 
 Blockchain Operations:
-• "upgrade polkadot to latest" - Upgrade Polkadot network
-• "upgrade kusama to latest" - Upgrade Kusama network
+• "upgrade [network] to latest" - Upgrade any blockchain network
 • "update network [name]" - Update specific network
+• "new release for [client]" - Process release updates
 
 I can help you with blockchain network upgrades and deployments.
 Just tell me what you'd like me to do in natural language!`

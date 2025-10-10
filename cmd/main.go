@@ -356,8 +356,6 @@ func (b *Bot) handleSlashCommand(w http.ResponseWriter, r *http.Request) {
 		}
 	case DeployDashboardCmd, DeployAPICmd, DeployProxyCmd:
 		response = b.githubHandler.HandleDeploy(command, text, userID, channelID)
-	case UpdatePolkadotToLatestCmd:
-		response = b.githubHandler.HandleChainUpdate("chain", text, userID)
 	case UpdateNetworkCmd:
 		response = b.githubHandler.HandleChainUpdate("network", text, userID)
 	default:
