@@ -190,8 +190,8 @@ func createDeploymentStartBlocks(service, branch, environment, userID string) []
 
 func createUpdateStartBlocks(chain, userID string) []slack.Block {
 	return []slack.Block{
-		createStatusBlock(":rocket:", "Polkadot update started!"),
-		createInfoBlock(fmt.Sprintf("*Chain:* %s\n*Requested by:* <@%s>", chain, userID)),
+		createStatusBlock(":rocket:", "Network update started!"),
+		createInfoBlock(fmt.Sprintf("*Network:* %s\n*Requested by:* <@%s>", chain, userID)),
 		createProgressBlock(),
 	}
 }

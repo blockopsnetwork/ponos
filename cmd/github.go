@@ -12,11 +12,10 @@ import (
 )
 
 const (
-	DeployDashboardCmd        = "/deploy-dashboard"
-	DeployAPICmd              = "/deploy-api" 
-	DeployProxyCmd            = "/deploy-proxy"
-	UpdatePolkadotToLatestCmd = "/update-chain"
-	UpdateNetworkCmd          = "/update-network"
+	DeployDashboardCmd = "/deploy-dashboard"
+	DeployAPICmd       = "/deploy-api" 
+	DeployProxyCmd     = "/deploy-proxy"
+	UpdateNetworkCmd   = "/update-network"
 
 	DashboardRepo = "blockops-sh/user-dashboard-client-v2"
 	APIRepo       = "blockops-sh/api-core-service"
