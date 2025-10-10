@@ -126,33 +126,17 @@ func BuildAIAnalysisPrompt(payload ReleasesWebhookPayload) string {
 			key, release.TagName, release.Name, release.Prerelease, release.PublishedAt, release.Body)
 	}
 
-	prompt := fmt.Sprintf(`You are NodeOperator.ai, an expert blockchain infrastructure AI agent specializing in blockchain node operations and updates.
+	prompt := fmt.Sprintf(`Analyze this blockchain release:
 
-RELEASE INFORMATION:
+%s
 %s
 
-REPOSITORY INFORMATION:
-%s
+Provide structured analysis:
 
-TASK: Analyze this blockchain node release comprehensively and provide detailed recommendations.
-
-Please analyze the provided RELEASE NOTES carefully and provide a structured analysis covering:
-
-RELEASE SUMMARY: Based on the actual release notes, what are the specific key changes, features, or fixes in this release? What specific problems does it solve? Reference specific components, modules, or improvements mentioned in the release notes.
-
-NETWORK IDENTIFICATION: Which blockchain network(s) is this for?
-
-SEVERITY ASSESSMENT: Rate as low/medium/high/critical based on:
-   - Security fixes
-   - Performance improvements  
-   - Breaking changes
-   - Network compatibility
-
-CONFIGURATION CHANGES: Based on the release notes, are there any specific configuration file updates, environment variable changes, runtime parameter modifications, or deployment changes needed? Look for breaking changes, new features requiring config, or deprecated settings. If none mentioned, state "No configuration changes mentioned in release notes".
-
-RISK ASSESSMENT: What are the potential risks of updating vs not updating? Consider downtime, compatibility, rollback complexity.
-
-Provide detailed analysis to help node operators make an informed decision about this release.`, releaseInfo, repoInfo)
+RELEASE SUMMARY: Key changes, features, fixes from release notes.
+SEVERITY ASSESSMENT: Rate as low/medium/high/critical based on security fixes, performance, breaking changes.
+CONFIGURATION CHANGES: Required config/deployment changes, or "None mentioned".
+RISK ASSESSMENT: Risks of updating vs not updating.`, releaseInfo, repoInfo)
 
 	return prompt
 }
