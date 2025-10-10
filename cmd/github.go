@@ -173,28 +173,46 @@ func (h *GitHubDeployHandler) HandleChainUpdate(updateType, text, userID string)
 
 func (h *GitHubDeployHandler) startNetworkUpdate(network, updateType, userID string) {
 	ctx := context.Background()
-	req := NetworkUpdateRequest{
-		DetectedNetworks: []string{network},
-		ReleaseTag:       "",
-		CommitMessage:    fmt.Sprintf("ponos: update %s image tags to latest stable", network),
-		PRTitle:          fmt.Sprintf("Update %s image tags to latest stable", network),
-		PRBody:           fmt.Sprintf("Automated update of %s Docker image tags to latest stable versions.", network),
-		BranchPrefix:     fmt.Sprintf("ponos/update-%s", network),
-	}
 
-	result, err := h.updateNetworkImages(ctx, req)
-	if err != nil {
-		h.notifyError(h.bot.config.SlackUpdateChannel, fmt.Sprintf("%s update failed: %v", strings.ToUpper(network[:1])+network[1:], err))
+	// Get real release data from nodereleases.com API
+	if h.bot.agent == nil {
+		h.notifyError(h.bot.config.SlackUpdateChannel, "AI agent not available for network updates")
 		return
 	}
 
-	blocks := createSuccessBlocks(fmt.Sprintf("%s update completed!", strings.ToUpper(network[:1])+network[1:]),
-		fmt.Sprintf("*Pull Request:* <%s|View PR>\n*Commit:* <%s|View Commit>",
-			result.PRUrl, result.CommitURL))
-
-	if _, _, err := h.bot.client.PostMessage(h.bot.config.SlackUpdateChannel, slack.MsgOptionBlocks(blocks...)); err != nil {
-		h.bot.logger.Error("failed to send update success message", "error", err, "network", network)
+	releaseInfo, err := h.bot.agent.GetLatestNetworkRelease(ctx, network)
+	if err != nil {
+		h.bot.logger.Error("Failed to get latest release", "error", err, "network", network)
+		h.notifyError(h.bot.config.SlackUpdateChannel, fmt.Sprintf("Failed to get latest %s release: %v", network, err))
+		return
 	}
+
+	payload := ReleasesWebhookPayload{
+		EventType: "manual_update",
+		Username:  userID,
+		Timestamp: time.Now().Format(time.RFC3339),
+		Repositories: []Repository{releaseInfo.Repository},
+		Releases: map[string]ReleaseInfo{
+			releaseInfo.Release.TagName: releaseInfo.Release,
+		},
+	}
+
+	summary, err := h.bot.agent.ProcessReleaseUpdate(ctx, payload)
+	if err != nil {
+		h.bot.logger.Error("AI agent processing failed", "error", err, "network", network)
+		h.notifyError(h.bot.config.SlackUpdateChannel, fmt.Sprintf("AI analysis failed for %s: %v", network, err))
+		return
+	}
+
+	prURL, err := h.agentUpdatePR(ctx, payload, summary)
+	if err != nil {
+		h.bot.logger.Error("Agent failed to create PR", "error", err)
+		h.notifyError(h.bot.config.SlackUpdateChannel, fmt.Sprintf("Failed to create PR for %s: %v", network, err))
+		return
+	}
+
+	h.bot.logger.Info("Network update PR created with AI analysis", "url", prURL, "network", network)
+	h.bot.sendReleaseSummaryFromAgent(h.bot.config.SlackUpdateChannel, payload, summary, prURL)
 }
 
 func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req NetworkUpdateRequest) (*NetworkUpdateResult, error) {
@@ -293,13 +311,18 @@ func (h *GitHubDeployHandler) agentUpdatePR(ctx context.Context, payload Release
 	}
 
 	repo := payload.Repositories[0]
-	releaseTag := repo.ReleaseTag
+	
+	dockerTag := summary.DockerTag
+	if dockerTag == "" || dockerTag == "Not specified" {
+		dockerTag = repo.ReleaseTag
+		h.bot.logger.Warn("llm unable to infer docker tag, using GitHub release tag", "github_tag", repo.ReleaseTag)
+	}
 
-	title, body, commitMessage := BuildPRContent(repo.NetworkName, releaseTag, h.mcpClient.botName, summary)
+	title, body, commitMessage := BuildPRContent(repo.NetworkName, dockerTag, h.mcpClient.botName, summary)
 
 	req := NetworkUpdateRequest{
 		DetectedNetworks: []string{strings.ToLower(repo.NetworkName)},
-		ReleaseTag:       releaseTag,
+		ReleaseTag:       dockerTag, 
 		CommitMessage:    commitMessage,
 		PRTitle:          title,
 		PRBody:           body,
@@ -327,7 +350,6 @@ func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesTo
 	var upgrades []imageUpgrade
 
 	for _, f := range filesToUpdate {
-		// Get file content using MCP
 		content, err := h.mcpClient.GetFileContent(ctx, f.owner, f.repo, f.path)
 		if err != nil {
 			continue
@@ -341,7 +363,6 @@ func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesTo
 			continue
 		}
 
-		// Trac upgrades for reporting
 		var oldToNew []imageUpgrade
 		var root yaml.Node
 		if yaml.Unmarshal([]byte(content), &root) == nil {

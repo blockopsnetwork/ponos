@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 
@@ -22,6 +24,7 @@ type AgentSummary struct {
 	ReleaseSummary      string   `json:"release_summary"`
 	ConfigChangesNeeded string   `json:"config_changes_needed"`
 	RiskAssessment      string   `json:"risk_assessment"`
+	DockerTag           string   `json:"docker_tag"`
 }
 
 type YAMLAnalysisResult struct {
@@ -29,6 +32,13 @@ type YAMLAnalysisResult struct {
 	Reasoning           string   `json:"reasoning"`
 	NetworkTypes        []string `json:"network_types"`
 }
+
+type NetworkReleaseInfo struct {
+	Network    string      `json:"network"`
+	Repository Repository  `json:"repository"`
+	Release    ReleaseInfo `json:"release"`
+}
+
 
 func NewNodeOperatorAgent(logger *slog.Logger) (*NodeOperatorAgent, error) {
 	apiKey := os.Getenv("OPENAI_API_KEY")
@@ -162,9 +172,10 @@ func (agent *NodeOperatorAgent) parseLLMResponse(response string, payload Releas
 		detectedNetworks = []string{"unknown"}
 	}
 
-	releaseSummary := agent.extractSection(response, "RELEASE SUMMARY", "NETWORK IDENTIFICATION")
+	releaseSummary := agent.extractSection(response, "RELEASE SUMMARY", "SEVERITY ASSESSMENT")
 	configChanges := agent.extractSection(response, "CONFIGURATION CHANGES", "RISK ASSESSMENT")
-	riskAssessment := agent.extractSection(response, "RISK ASSESSMENT", "")
+	riskAssessment := agent.extractSection(response, "RISK ASSESSMENT", "DOCKER TAG")
+	dockerTag := agent.extractSection(response, "DOCKER TAG", "")
 
 	return &AgentSummary{
 		DetectedNetworks:    detectedNetworks,
@@ -173,6 +184,7 @@ func (agent *NodeOperatorAgent) parseLLMResponse(response string, payload Releas
 		ReleaseSummary:      releaseSummary,
 		ConfigChangesNeeded: configChanges,
 		RiskAssessment:      riskAssessment,
+		DockerTag:           dockerTag,
 	}
 }
 
@@ -331,3 +343,84 @@ func (agent *NodeOperatorAgent) parseUpgradeIntentResponse(response string) *Upg
 	
 	return intent
 }
+
+func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, network string) (*NetworkReleaseInfo, error) {
+	apiURL := fmt.Sprintf("https://api.nodereleases.com/releases?network=%s&limit=1", network)
+	
+	agent.logger.Info("Fetching latest release", "network", network, "url", apiURL)
+	
+	resp, err := http.Get(apiURL)
+	if err != nil {
+		agent.logger.Error("Failed to fetch release data", "error", err, "network", network)
+		return nil, fmt.Errorf("failed to fetch release data: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		agent.logger.Error("API returned non-200 status", "status", resp.StatusCode, "network", network)
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+	
+	var releaseResp struct {
+		Releases []struct {
+			Repository string `json:"repository"`
+			Release    *struct {
+				TagName     string `json:"tag_name"`
+				Name        string `json:"name"`
+				Body        string `json:"body"`
+				HTMLURL     string `json:"html_url"`
+				PublishedAt string `json:"published_at"`
+				Prerelease  bool   `json:"prerelease"`
+				Draft       bool   `json:"draft"`
+			} `json:"release"`
+			Metadata *struct {
+				ClientType  string `json:"client_type"`
+				NetworkName string `json:"network_name"`
+				DisplayName string `json:"display_name"`
+			} `json:"metadata"`
+		} `json:"releases"`
+		Total int `json:"total"`
+	}
+	
+	if err := json.NewDecoder(resp.Body).Decode(&releaseResp); err != nil {
+		agent.logger.Error("Failed to decode API response", "error", err, "network", network)
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	
+	if len(releaseResp.Releases) == 0 {
+		agent.logger.Warn("No releases found for network", "network", network)
+		return nil, fmt.Errorf("no releases found for network: %s", network)
+	}
+	
+	releaseData := releaseResp.Releases[0]
+	if releaseData.Release == nil {
+		return nil, fmt.Errorf("release data is nil for network: %s", network)
+	}
+	
+	repoParts := strings.Split(releaseData.Repository, "/")
+	if len(repoParts) != 2 {
+		return nil, fmt.Errorf("invalid repository format: %s", releaseData.Repository)
+	}
+	
+	return &NetworkReleaseInfo{
+		Network: network,
+		Repository: Repository{
+			Owner:       repoParts[0],
+			Name:        repoParts[1],
+			DisplayName: releaseData.Metadata.DisplayName,
+			NetworkName: releaseData.Metadata.NetworkName,
+			ClientType:  releaseData.Metadata.ClientType,
+			ReleaseTag:  releaseData.Release.TagName,
+		},
+		Release: ReleaseInfo{
+			TagName:     releaseData.Release.TagName,
+			Name:        releaseData.Release.Name,
+			Body:        releaseData.Release.Body,
+			HTMLURL:     releaseData.Release.HTMLURL,
+			PublishedAt: releaseData.Release.PublishedAt,
+			Prerelease:  releaseData.Release.Prerelease,
+			Draft:       releaseData.Release.Draft,
+		},
+	}, nil
+}
+

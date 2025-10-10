@@ -122,37 +122,28 @@ func BuildAIAnalysisPrompt(payload ReleasesWebhookPayload) string {
 	}
 
 	for key, release := range payload.Releases {
+		// Truncate release body to prevent token limit issues, but keep important info
+		releaseBody := release.Body
+		if len(releaseBody) > 4000 {
+			releaseBody = releaseBody[:4000] + "\n\n[Release notes truncated - first 4000 chars shown for analysis]"
+		}
+		
 		releaseInfo += fmt.Sprintf("Release: %s\nTag: %s\nName: %s\nPrerelease: %t\nPublished: %s\n\nRELEASE NOTES:\n%s\n\n",
-			key, release.TagName, release.Name, release.Prerelease, release.PublishedAt, release.Body)
+			key, release.TagName, release.Name, release.Prerelease, release.PublishedAt, releaseBody)
 	}
 
-	prompt := fmt.Sprintf(`You are NodeOperator.ai, an expert blockchain infrastructure AI agent specializing in blockchain node operations and updates.
+	prompt := fmt.Sprintf(`Analyze this blockchain release:
 
-RELEASE INFORMATION:
+%s
 %s
 
-REPOSITORY INFORMATION:
-%s
+Provide structured analysis:
 
-TASK: Analyze this blockchain node release comprehensively and provide detailed recommendations.
-
-Please analyze the provided RELEASE NOTES carefully and provide a structured analysis covering:
-
-RELEASE SUMMARY: Based on the actual release notes, what are the specific key changes, features, or fixes in this release? What specific problems does it solve? Reference specific components, modules, or improvements mentioned in the release notes.
-
-NETWORK IDENTIFICATION: Which blockchain network(s) is this for?
-
-SEVERITY ASSESSMENT: Rate as low/medium/high/critical based on:
-   - Security fixes
-   - Performance improvements  
-   - Breaking changes
-   - Network compatibility
-
-CONFIGURATION CHANGES: Based on the release notes, are there any specific configuration file updates, environment variable changes, runtime parameter modifications, or deployment changes needed? Look for breaking changes, new features requiring config, or deprecated settings. If none mentioned, state "No configuration changes mentioned in release notes".
-
-RISK ASSESSMENT: What are the potential risks of updating vs not updating? Consider downtime, compatibility, rollback complexity.
-
-Provide detailed analysis to help node operators make an informed decision about this release.`, releaseInfo, repoInfo)
+RELEASE SUMMARY: Key changes, features, fixes from release notes.
+SEVERITY ASSESSMENT: Rate as low/medium/high/critical based on security fixes, performance, breaking changes.
+CONFIGURATION CHANGES: Required config/deployment changes, or "None mentioned".
+RISK ASSESSMENT: Risks of updating vs not updating.
+DOCKER TAG: Based on the GitHub release tag and release notes, determine the correct Docker image tag to use. Consider version mappings mentioned in release notes, network-specific patterns (e.g., Polkadot "stable####"), and how the GitHub release tag should map to Docker tag format.`, releaseInfo, repoInfo)
 
 	return prompt
 }
