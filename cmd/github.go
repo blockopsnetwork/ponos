@@ -187,7 +187,6 @@ func (h *GitHubDeployHandler) startNetworkUpdate(network, updateType, userID str
 		return
 	}
 
-	// Create payload with real release data for AI processing
 	payload := ReleasesWebhookPayload{
 		EventType: "manual_update",
 		Username:  userID,
@@ -198,7 +197,6 @@ func (h *GitHubDeployHandler) startNetworkUpdate(network, updateType, userID str
 		},
 	}
 
-	// Process with AI agent using real release data
 	summary, err := h.bot.agent.ProcessReleaseUpdate(ctx, payload)
 	if err != nil {
 		h.bot.logger.Error("AI agent processing failed", "error", err, "network", network)
@@ -206,7 +204,6 @@ func (h *GitHubDeployHandler) startNetworkUpdate(network, updateType, userID str
 		return
 	}
 
-	// Execute update with AI summary
 	prURL, err := h.agentUpdatePR(ctx, payload, summary)
 	if err != nil {
 		h.bot.logger.Error("Agent failed to create PR", "error", err)
