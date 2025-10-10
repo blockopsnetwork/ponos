@@ -314,13 +314,18 @@ func (h *GitHubDeployHandler) agentUpdatePR(ctx context.Context, payload Release
 	}
 
 	repo := payload.Repositories[0]
-	releaseTag := repo.ReleaseTag
+	
+	dockerTag := summary.DockerTag
+	if dockerTag == "" || dockerTag == "Not specified" {
+		dockerTag = repo.ReleaseTag
+		h.bot.logger.Warn("llm unable to infer docker tag, using GitHub release tag", "github_tag", repo.ReleaseTag)
+	}
 
-	title, body, commitMessage := BuildPRContent(repo.NetworkName, releaseTag, h.mcpClient.botName, summary)
+	title, body, commitMessage := BuildPRContent(repo.NetworkName, dockerTag, h.mcpClient.botName, summary)
 
 	req := NetworkUpdateRequest{
 		DetectedNetworks: []string{strings.ToLower(repo.NetworkName)},
-		ReleaseTag:       releaseTag,
+		ReleaseTag:       dockerTag, 
 		CommitMessage:    commitMessage,
 		PRTitle:          title,
 		PRBody:           body,
@@ -348,7 +353,6 @@ func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesTo
 	var upgrades []imageUpgrade
 
 	for _, f := range filesToUpdate {
-		// Get file content using MCP
 		content, err := h.mcpClient.GetFileContent(ctx, f.owner, f.repo, f.path)
 		if err != nil {
 			continue
@@ -362,7 +366,6 @@ func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesTo
 			continue
 		}
 
-		// Trac upgrades for reporting
 		var oldToNew []imageUpgrade
 		var root yaml.Node
 		if yaml.Unmarshal([]byte(content), &root) == nil {

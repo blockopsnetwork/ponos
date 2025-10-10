@@ -122,8 +122,14 @@ func BuildAIAnalysisPrompt(payload ReleasesWebhookPayload) string {
 	}
 
 	for key, release := range payload.Releases {
+		// Truncate release body to prevent token limit issues, but keep important info
+		releaseBody := release.Body
+		if len(releaseBody) > 4000 {
+			releaseBody = releaseBody[:4000] + "\n\n[Release notes truncated - first 4000 chars shown for analysis]"
+		}
+		
 		releaseInfo += fmt.Sprintf("Release: %s\nTag: %s\nName: %s\nPrerelease: %t\nPublished: %s\n\nRELEASE NOTES:\n%s\n\n",
-			key, release.TagName, release.Name, release.Prerelease, release.PublishedAt, release.Body)
+			key, release.TagName, release.Name, release.Prerelease, release.PublishedAt, releaseBody)
 	}
 
 	prompt := fmt.Sprintf(`Analyze this blockchain release:
@@ -136,7 +142,8 @@ Provide structured analysis:
 RELEASE SUMMARY: Key changes, features, fixes from release notes.
 SEVERITY ASSESSMENT: Rate as low/medium/high/critical based on security fixes, performance, breaking changes.
 CONFIGURATION CHANGES: Required config/deployment changes, or "None mentioned".
-RISK ASSESSMENT: Risks of updating vs not updating.`, releaseInfo, repoInfo)
+RISK ASSESSMENT: Risks of updating vs not updating.
+DOCKER TAG: Based on the GitHub release tag and release notes, determine the correct Docker image tag to use. Consider version mappings mentioned in release notes, network-specific patterns (e.g., Polkadot "stable####"), and how the GitHub release tag should map to Docker tag format.`, releaseInfo, repoInfo)
 
 	return prompt
 }
