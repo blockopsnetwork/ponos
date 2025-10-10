@@ -77,7 +77,7 @@ func runServer() {
 		os.Exit(1)
 	}
 	
-	// Validate GitHub bot configuration
+	// Validate GitHub bot configurationac
 	if err := cfg.ValidateGitHubBotConfig(); err != nil {
 		logger.Error("GitHub bot configuration error", "error", err)
 		logger.Info("See config/config.go for setup instructions")
