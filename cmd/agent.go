@@ -172,9 +172,10 @@ func (agent *NodeOperatorAgent) parseLLMResponse(response string, payload Releas
 		detectedNetworks = []string{"unknown"}
 	}
 
-	releaseSummary := agent.extractSection(response, "RELEASE SUMMARY", "NETWORK IDENTIFICATION")
+	releaseSummary := agent.extractSection(response, "RELEASE SUMMARY", "SEVERITY ASSESSMENT")
 	configChanges := agent.extractSection(response, "CONFIGURATION CHANGES", "RISK ASSESSMENT")
-	riskAssessment := agent.extractSection(response, "RISK ASSESSMENT", "")
+	riskAssessment := agent.extractSection(response, "RISK ASSESSMENT", "DOCKER TAG")
+	dockerTag := agent.extractSection(response, "DOCKER TAG", "")
 
 	return &AgentSummary{
 		DetectedNetworks:    detectedNetworks,
@@ -183,6 +184,7 @@ func (agent *NodeOperatorAgent) parseLLMResponse(response string, payload Releas
 		ReleaseSummary:      releaseSummary,
 		ConfigChangesNeeded: configChanges,
 		RiskAssessment:      riskAssessment,
+		DockerTag:           dockerTag,
 	}
 }
 
