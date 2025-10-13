@@ -16,7 +16,6 @@ const (
 	mcpHTTPTimeout = 30 * time.Second
 )
 
-// MCPHTTPClient connects to standalone MCP server via HTTP
 type MCPHTTPClient struct {
 	serverURL string
 	client    *http.Client
@@ -25,7 +24,6 @@ type MCPHTTPClient struct {
 	botName   string
 }
 
-// MCPRequest represents an MCP JSON-RPC request
 type MCPHTTPRequest struct {
 	JSONRPC string      `json:"jsonrpc"`
 	ID      int         `json:"id"`
@@ -33,7 +31,6 @@ type MCPHTTPRequest struct {
 	Params  interface{} `json:"params"`
 }
 
-// MCPResponse represents an MCP JSON-RPC response
 type MCPHTTPResponse struct {
 	JSONRPC string      `json:"jsonrpc"`
 	ID      int         `json:"id"`
@@ -41,20 +38,17 @@ type MCPHTTPResponse struct {
 	Error   *MCPHTTPError `json:"error,omitempty"`
 }
 
-// MCPError represents an MCP error
 type MCPHTTPError struct {
 	Code    int         `json:"code"`
 	Message string      `json:"message"`
 	Data    interface{} `json:"data,omitempty"`
 }
 
-// ToolCallParams for MCP tool calls
 type MCPToolCallParams struct {
 	Name      string                 `json:"name"`
 	Arguments map[string]interface{} `json:"arguments"`
 }
 
-// NewMCPHTTPClient creates a new HTTP-based MCP client
 func NewMCPHTTPClient(serverURL, token, appID, installID, pemKey, botName string, logger *slog.Logger) *MCPHTTPClient {
 	if serverURL == "" {
 		serverURL = "http://localhost:3001"
@@ -67,15 +61,11 @@ func NewMCPHTTPClient(serverURL, token, appID, installID, pemKey, botName string
 		},
 		logger: logger,
 	}
-	
-	// Note: Session initialization will be done lazily on first tool call
-	
+		
 	return client
 }
 
-// CallTool calls a tool on the MCP server
 func (c *MCPHTTPClient) CallTool(ctx context.Context, toolName string, args map[string]interface{}) (map[string]interface{}, error) {
-	// Initialize session if needed
 	if c.sessionID == "" {
 		if err := c.initializeSession(); err != nil {
 			return nil, fmt.Errorf("failed to initialize session: %v", err)
@@ -123,7 +113,6 @@ func (c *MCPHTTPClient) CallTool(ctx context.Context, toolName string, args map[
 	return c.parseMCPResponse(respBody)
 }
 
-// GetFileContent gets file contents from a repository
 func (c *MCPHTTPClient) GetFileContent(ctx context.Context, owner, repo, path string) (string, error) {
 	args := map[string]interface{}{
 		"owner": owner,
@@ -136,12 +125,10 @@ func (c *MCPHTTPClient) GetFileContent(ctx context.Context, owner, repo, path st
 		return "", fmt.Errorf("failed to get file contents: %v", err)
 	}
 
-	// Parse the MCP response format
 	if contentArray, ok := result["content"].([]interface{}); ok {
 		for _, item := range contentArray {
 			if itemMap, ok := item.(map[string]interface{}); ok {
 				if textData, ok := itemMap["text"].(string); ok {
-					// The text data is a JSON string containing the GitHub API response
 					var githubResp map[string]interface{}
 					if err := json.Unmarshal([]byte(textData), &githubResp); err == nil {
 						if content, ok := githubResp["content"].(string); ok {
@@ -157,7 +144,6 @@ func (c *MCPHTTPClient) GetFileContent(ctx context.Context, owner, repo, path st
 	return "", fmt.Errorf("content not found in response")
 }
 
-// CreateBranch creates a new branch
 func (c *MCPHTTPClient) CreateBranch(ctx context.Context, owner, repo, branchName string) error {
 	args := map[string]interface{}{
 		"owner":  owner,
@@ -174,9 +160,7 @@ func (c *MCPHTTPClient) CreateBranch(ctx context.Context, owner, repo, branchNam
 	return nil
 }
 
-// CreateCommit creates a commit with multiple files (maps to push_files)
 func (c *MCPHTTPClient) CreateCommit(ctx context.Context, owner, repo, branch, message string, files []FileUpdate) (string, error) {
-	// Convert FileUpdate to the format expected by push_files
 	mcpFiles := make([]map[string]interface{}, len(files))
 	for i, file := range files {
 		mcpFiles[i] = map[string]interface{}{
@@ -198,7 +182,6 @@ func (c *MCPHTTPClient) CreateCommit(ctx context.Context, owner, repo, branch, m
 		return "", fmt.Errorf("failed to push files: %v", err)
 	}
 
-	// Try to extract commit SHA from response
 	if contentArray, ok := result["content"].([]interface{}); ok && len(contentArray) > 0 {
 		if firstItem, ok := contentArray[0].(map[string]interface{}); ok {
 			if textData, ok := firstItem["text"].(string); ok {
@@ -217,7 +200,6 @@ func (c *MCPHTTPClient) CreateCommit(ctx context.Context, owner, repo, branch, m
 	return "", fmt.Errorf("commit SHA not found in response")
 }
 
-// CreatePullRequest creates a pull request
 func (c *MCPHTTPClient) CreatePullRequest(ctx context.Context, owner, repo, head, base, title, body string) (string, error) {
 	args := map[string]interface{}{
 		"owner": owner,
@@ -233,7 +215,6 @@ func (c *MCPHTTPClient) CreatePullRequest(ctx context.Context, owner, repo, head
 		return "", fmt.Errorf("failed to create pull request: %v", err)
 	}
 
-	// Extract PR URL from response
 	if contentArray, ok := result["content"].([]interface{}); ok && len(contentArray) > 0 {
 		if firstItem, ok := contentArray[0].(map[string]interface{}); ok {
 			if textData, ok := firstItem["text"].(string); ok {
@@ -250,7 +231,6 @@ func (c *MCPHTTPClient) CreatePullRequest(ctx context.Context, owner, repo, head
 	return "", fmt.Errorf("PR URL not found in response")
 }
 
-// UpdateFile updates a single file (maps to create_or_update_file)
 func (c *MCPHTTPClient) UpdateFile(ctx context.Context, owner, repo, path, content, message, branch string) error {
 	args := map[string]interface{}{
 		"owner":   owner,
@@ -269,7 +249,6 @@ func (c *MCPHTTPClient) UpdateFile(ctx context.Context, owner, repo, path, conte
 	return nil
 }
 
-// parseMCPResponse parses an MCP JSON-RPC response
 func (c *MCPHTTPClient) parseMCPResponse(respBody []byte) (map[string]interface{}, error) {
 	var mcpResp MCPHTTPResponse
 	if err := json.Unmarshal(respBody, &mcpResp); err != nil {
@@ -288,7 +267,6 @@ func (c *MCPHTTPClient) parseMCPResponse(respBody []byte) (map[string]interface{
 	return result, nil
 }
 
-// initializeSession establishes an SSE session with the MCP server
 func (c *MCPHTTPClient) initializeSession() error {
 	req, err := http.NewRequest("GET", c.serverURL+"/sse", nil)
 	if err != nil {
@@ -303,7 +281,6 @@ func (c *MCPHTTPClient) initializeSession() error {
 	}
 	defer resp.Body.Close()
 
-	// Read the SSE response to get the sessionId
 	buf := make([]byte, 1024)
 	n, err := resp.Body.Read(buf)
 	if err != nil && n == 0 {
@@ -311,7 +288,6 @@ func (c *MCPHTTPClient) initializeSession() error {
 	}
 
 	response := string(buf[:n])
-	// Parse sessionId from response like: "data: /messages?sessionId=27bb034f-d32e-4d4f-8e10-7f4ee2105c86"
 	lines := strings.Split(response, "\n")
 	for _, line := range lines {
 		if strings.HasPrefix(line, "data: ") {
