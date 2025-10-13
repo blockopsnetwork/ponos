@@ -1,20 +1,24 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"strings"
-
-	"github.com/tmc/langchaingo/llms/openai"
+	"time"
 )
 
 type NodeOperatorAgent struct {
-	llm    *openai.LLM
-	logger *slog.Logger
+	logger       *slog.Logger
+	agentCoreURL string
+	httpClient   *http.Client
+	useAgentCore bool
 }
 
 type AgentSummary struct {
@@ -25,12 +29,14 @@ type AgentSummary struct {
 	ConfigChangesNeeded string   `json:"config_changes_needed"`
 	RiskAssessment      string   `json:"risk_assessment"`
 	DockerTag           string   `json:"docker_tag"`
+	Success             bool     `json:"success"`
+	Error               string   `json:"error,omitempty"`
 }
 
 type YAMLAnalysisResult struct {
 	BlockchainContainers []string `json:"blockchain_containers"`
-	Reasoning           string   `json:"reasoning"`
-	NetworkTypes        []string `json:"network_types"`
+	Reasoning            string   `json:"reasoning"`
+	NetworkTypes         []string `json:"network_types"`
 }
 
 type NetworkReleaseInfo struct {
@@ -39,51 +45,272 @@ type NetworkReleaseInfo struct {
 	Release    ReleaseInfo `json:"release"`
 }
 
-
 func NewNodeOperatorAgent(logger *slog.Logger) (*NodeOperatorAgent, error) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY environment variable is required")
+	// Check if agent-core should be used (preferred)
+	agentCoreURL := os.Getenv("AGENT_CORE_URL")
+	if agentCoreURL == "" {
+		agentCoreURL = "http://localhost:8001" // Default agent-core URL (updated port)
 	}
 
-	llm, err := openai.New(openai.WithToken(apiKey))
+	agent := &NodeOperatorAgent{
+		logger:       logger,
+		agentCoreURL: agentCoreURL,
+		httpClient: &http.Client{
+			Timeout: 300 * time.Second, // 5 minutes for streaming operations
+		},
+		useAgentCore: true, // Always use agent-core for conversations
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := agent.healthCheckAgentCore(ctx); err != nil {
+		return nil, fmt.Errorf("agent-core is not available: %w. This system requires agent-core to be running", err)
+	}
+
+	logger.Info("Connected to intelligent agent-core backend", "url", agentCoreURL)
+
+	return agent, nil
+}
+
+func (agent *NodeOperatorAgent) healthCheckAgentCore(ctx context.Context) error {
+	url := fmt.Sprintf("%s/health", agent.agentCoreURL)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("failed to create health check request: %w", err)
 	}
 
-	return &NodeOperatorAgent{
-		llm:    llm,
-		logger: logger,
-	}, nil
+	resp, err := agent.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("health check failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("agent-core health check failed with status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// callAgentCoreReleaseAnalysis sends release data to agent-core blockchain analysis endpoint
+func (agent *NodeOperatorAgent) callAgentCoreReleaseAnalysis(ctx context.Context, payload ReleasesWebhookPayload) (*AgentSummary, error) {
+	request := map[string]interface{}{
+		"repositories": payload.Repositories,
+		"releases":     payload.Releases,
+		"event_type":   payload.EventType,
+		"username":     payload.Username,
+	}
+
+	requestBody, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/blockchain/analyze-release", agent.agentCoreURL)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := agent.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request to agent-core failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("agent-core returned error status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var analysisResult AgentSummary
+	if err := json.NewDecoder(resp.Body).Decode(&analysisResult); err != nil {
+		return nil, fmt.Errorf("failed to decode agent-core response: %w", err)
+	}
+
+	if !analysisResult.Success {
+		return nil, fmt.Errorf("agent-core analysis failed: %s", analysisResult.Error)
+	}
+
+	return &analysisResult, nil
+}
+
+// callAgentCore sends a prompt to agent-core and returns the response content
+func (agent *NodeOperatorAgent) callAgentCore(ctx context.Context, prompt string) (string, error) {
+	request := map[string]interface{}{
+		"message": prompt,
+		"context": map[string]interface{}{
+			"source":    "ponos-network-analysis",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"user_type": "blockchain_operator",
+		},
+	}
+
+	requestBody, err := json.Marshal(request)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/agent/simple", agent.agentCoreURL)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := agent.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("HTTP request to agent-core failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("agent-core returned error status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var response map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return "", fmt.Errorf("failed to decode agent-core response: %w", err)
+	}
+
+	content, ok := response["content"].(string)
+	if !ok {
+		return "", fmt.Errorf("invalid response format from agent-core")
+	}
+
+	return content, nil
+}
+
+
+func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Reader, updates chan<- StreamingUpdate) error {
+	scanner := bufio.NewScanner(body)
+
+	agent.logger.Info("Processing streaming response with real-time updates")
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		dataStr := strings.TrimPrefix(line, "data: ")
+		var streamEvent map[string]interface{}
+
+		if err := json.Unmarshal([]byte(dataStr), &streamEvent); err != nil {
+			agent.logger.Warn("Failed to parse stream event", "error", err, "data", dataStr)
+			continue
+		}
+
+		eventType, ok := streamEvent["type"].(string)
+		if !ok {
+			continue
+		}
+
+		message, _ := streamEvent["message"].(string)
+
+		switch eventType {
+		case "thinking":
+			agent.logger.Info("Stream thinking", "message", message)
+			updates <- StreamingUpdate{
+				Type:    "thinking",
+				Message: message,
+			}
+
+		case "tool_start":
+			if tool, ok := streamEvent["tool"].(string); ok {
+				agent.logger.Info("Stream tool start", "tool", tool)
+				updates <- StreamingUpdate{
+					Type:    "tool_start",
+					Message: fmt.Sprintf("Running %s", tool),
+					Tool:    tool,
+				}
+			}
+
+		case "tool_result":
+			if tool, ok := streamEvent["tool"].(string); ok {
+				success, _ := streamEvent["success"].(bool)
+
+				agent.logger.Info("Stream tool result", "tool", tool, "success", success)
+				updates <- StreamingUpdate{
+					Type:    "tool_result",
+					Message: fmt.Sprintf("%s completed", tool),
+					Tool:    tool,
+					Success: success,
+				}
+			}
+
+		case "assistant":
+			agent.logger.Info("Stream assistant response", "message", message)
+			updates <- StreamingUpdate{
+				Type:    "assistant",
+				Message: message,
+			}
+
+		case "status":
+			agent.logger.Info("Stream status", "message", message)
+			updates <- StreamingUpdate{
+				Type:    "status",
+				Message: message,
+			}
+
+		case "complete":
+			agent.logger.Info("Stream completed")
+
+			sessionID, _ := streamEvent["session_id"].(string)
+			checkpointID, _ := streamEvent["checkpoint_id"].(string)
+
+			updates <- StreamingUpdate{
+				Type:         "complete",
+				Message:      "Operation completed",
+				SessionID:    sessionID,
+				CheckpointID: checkpointID,
+			}
+
+		case "error":
+			agent.logger.Error("Stream error", "message", message)
+			return fmt.Errorf("agent-core error: %s", message)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading stream: %w", err)
+	}
+
+	return nil
 }
 
 func (agent *NodeOperatorAgent) ProcessReleaseUpdate(ctx context.Context, payload ReleasesWebhookPayload) (*AgentSummary, error) {
-	prompt := BuildAIAnalysisPrompt(payload)
-
-	response, err := agent.llm.Call(ctx, prompt)
+	// Use new specialized agent-core blockchain analysis endpoint
+	response, err := agent.callAgentCoreReleaseAnalysis(ctx, payload)
 	if err != nil {
-		agent.logger.Error("OpenAI call failed", "error", err)
+		agent.logger.Error("agent-core blockchain analysis failed", "error", err)
 		return nil, err
 	}
 
-	llmResponse := response
-	decision := agent.parseLLMResponse(llmResponse, payload)
-
-	return decision, nil
+	return response, nil
 }
 
 func (agent *NodeOperatorAgent) AnalyzeYAMLForBlockchainContainers(ctx context.Context, yamlContent string) ([]string, error) {
 	prompt := agent.buildYAMLAnalysisPrompt(yamlContent)
-	
-	response, err := agent.llm.Call(ctx, prompt)
+
+	// Use agent-core for AI analysis
+	response, err := agent.callAgentCore(ctx, prompt)
 	if err != nil {
-		agent.logger.Error("LLM YAML analysis failed", "error", err)
+		agent.logger.Error("agent-core YAML analysis failed", "error", err)
 		return nil, err
 	}
-	
+
 	repos := agent.parseYAMLAnalysisResponse(response)
-	agent.logger.Info("LLM YAML analysis completed", "containers_found", len(repos))
-	
+	agent.logger.Info("agent-core YAML analysis completed", "containers_found", len(repos))
+
 	return repos, nil
 }
 
@@ -122,23 +349,23 @@ If no blockchain containers are found, return: []`, yamlContent)
 
 func (agent *NodeOperatorAgent) parseYAMLAnalysisResponse(response string) []string {
 	response = strings.TrimSpace(response)
-	
+
 	startIdx := strings.Index(response, "[")
 	endIdx := strings.LastIndex(response, "]")
-	
+
 	if startIdx == -1 || endIdx == -1 || startIdx >= endIdx {
 		agent.logger.Warn("Invalid JSON response from LLM", "response", response[:min(len(response), 200)])
 		return []string{}
 	}
-	
+
 	jsonStr := response[startIdx : endIdx+1]
-	
+
 	var repos []string
 	jsonStr = strings.Trim(jsonStr, "[]")
 	if jsonStr == "" {
 		return []string{}
 	}
-	
+
 	parts := strings.Split(jsonStr, ",")
 	for _, part := range parts {
 		repo := strings.Trim(strings.TrimSpace(part), `"`)
@@ -146,138 +373,147 @@ func (agent *NodeOperatorAgent) parseYAMLAnalysisResponse(response string) []str
 			repos = append(repos, repo)
 		}
 	}
-	
+
 	return repos
 }
 
-func (agent *NodeOperatorAgent) parseLLMResponse(response string, payload ReleasesWebhookPayload) *AgentSummary {
-	responseLower := strings.ToLower(response)
-
-	severity := "medium"
-	if strings.Contains(responseLower, "critical") {
-		severity = "critical"
-	} else if strings.Contains(responseLower, "high") {
-		severity = "high"
-	} else if strings.Contains(responseLower, "low") {
-		severity = "low"
-	}
-
-	var detectedNetworks []string
-	for _, repo := range payload.Repositories {
-		if repo.NetworkName != "" {
-			detectedNetworks = append(detectedNetworks, strings.ToLower(repo.NetworkName))
-		}
-	}
-	if len(detectedNetworks) == 0 {
-		detectedNetworks = []string{"unknown"}
-	}
-
-	releaseSummary := agent.extractSection(response, "RELEASE SUMMARY", "SEVERITY ASSESSMENT")
-	configChanges := agent.extractSection(response, "CONFIGURATION CHANGES", "RISK ASSESSMENT")
-	riskAssessment := agent.extractSection(response, "RISK ASSESSMENT", "DOCKER TAG")
-	dockerTag := agent.extractSection(response, "DOCKER TAG", "")
-
-	return &AgentSummary{
-		DetectedNetworks:    detectedNetworks,
-		Severity:            severity,
-		Reasoning:           response[:min(len(response), 500)],
-		ReleaseSummary:      releaseSummary,
-		ConfigChangesNeeded: configChanges,
-		RiskAssessment:      riskAssessment,
-		DockerTag:           dockerTag,
-	}
-}
-
-func (agent *NodeOperatorAgent) extractSection(text, startSection, endSection string) string {
-	startIdx := strings.Index(strings.ToUpper(text), strings.ToUpper(startSection))
-	if startIdx == -1 {
-		return "Not specified"
-	}
-
-	startIdx = strings.Index(text[startIdx:], ":") + startIdx + 1
-	if startIdx == 0 {
-		return "Not specified"
-	}
-
-	endIdx := strings.Index(strings.ToUpper(text[startIdx:]), strings.ToUpper(endSection))
-	if endIdx == -1 {
-		content := strings.TrimSpace(text[startIdx:])
-		if len(content) > 300 {
-			content = content[:300] + "..."
-		}
-		return content
-	}
-
-	content := strings.TrimSpace(text[startIdx : startIdx+endIdx])
-	return content
-}
+// Removed parseLLMResponse and extractSection - migrated to agent-core blockchain.py
 
 type ConversationResponse struct {
-	Content   string
-	Finished  bool
-	Error     error
+	Content  string
+	Finished bool
+	Error    error
 }
 
-func (agent *NodeOperatorAgent) ProcessConversation(ctx context.Context, userMessage string) (*ConversationResponse, error) {
-	agent.logger.Info("ProcessConversation called", "message", userMessage)
-	
-	prompt := agent.buildConversationPrompt(userMessage)
-	agent.logger.Info("Built conversation prompt", "prompt_length", len(prompt))
-	
-	agent.logger.Info("Making LLM call")
-	response, err := agent.llm.Call(ctx, prompt)
-	if err != nil {
-		agent.logger.Error("AI conversation failed", "error", err)
-		return &ConversationResponse{
-			Error: err,
-			Finished: true,
-		}, err
+type StreamingUpdate struct {
+	Type         string // "thinking", "tool_start", "tool_result", "assistant", "complete"
+	Message      string
+	Tool         string
+	Success      bool
+	SessionID    string // For checkpoint management
+	CheckpointID string // For checkpoint management
+}
+
+
+func (agent *NodeOperatorAgent) ProcessConversationWithStreaming(ctx context.Context, userMessage string, updates chan<- StreamingUpdate) error {
+	agent.logger.Info("ProcessConversationWithStreaming called", "message", userMessage)
+	return agent.processConversationWithAgentCoreStreaming(ctx, userMessage, updates)
+}
+
+func (agent *NodeOperatorAgent) ProcessConversationWithStreamingAndHistory(ctx context.Context, userMessage string, conversationHistory []map[string]string, updates chan<- StreamingUpdate) error {
+	agent.logger.Info("ProcessConversationWithStreamingAndHistory called", "message", userMessage, "history_length", len(conversationHistory))
+	return agent.processConversationWithAgentCoreStreamingAndHistory(ctx, userMessage, conversationHistory, updates)
+}
+
+func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreaming(ctx context.Context, userMessage string, updates chan<- StreamingUpdate) error {
+	agent.logger.Info("Using intelligent agent-core for real-time streaming", "message", userMessage)
+
+	request := map[string]interface{}{
+		"message": userMessage,
+		"context": map[string]interface{}{
+			"source":    "ponos-tui",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"user_type": "blockchain_operator",
+			"capabilities": []string{
+				"network_upgrades",
+				"file_operations",
+				"system_commands",
+				"blockchain_analysis",
+			},
+		},
 	}
-	
-	agent.logger.Info("LLM call successful", "response_length", len(response))
-	return &ConversationResponse{
-		Content:  response,
-		Finished: true,
-	}, nil
+
+	requestBody, err := json.Marshal(request)
+	if err != nil {
+		agent.logger.Error("Failed to marshal request", "error", err)
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/agent/stream", agent.agentCoreURL)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		agent.logger.Error("Failed to create HTTP request", "error", err)
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("User-Agent", "Ponos-TUI/1.0")
+
+	resp, err := agent.httpClient.Do(req)
+	if err != nil {
+		agent.logger.Error("HTTP request to agent-core failed", "error", err, "url", url)
+		return fmt.Errorf("connection failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		agent.logger.Error("Agent-core returned error", "status", resp.StatusCode, "body", string(body))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	return agent.processStreamingResponseWithUpdates(resp.Body, updates)
 }
 
-func (agent *NodeOperatorAgent) buildConversationPrompt(userMessage string) string {
-	return fmt.Sprintf(`You are Ponos, an AI blockchain operations assistant with ACTUAL execution capabilities. You specialize in:
+func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreamingAndHistory(ctx context.Context, userMessage string, conversationHistory []map[string]string, updates chan<- StreamingUpdate) error {
+	agent.logger.Info("Using intelligent agent-core for real-time streaming with conversation history", "message", userMessage, "history_length", len(conversationHistory))
 
-🔗 AVAILABLE TOOLS & ACTIONS:
-- Upgrade any blockchain network client to latest releases (Polkadot, Kusama, Ethereum, etc.)
-- Update Kubernetes deployment manifests automatically
-- Create GitHub pull requests for infrastructure changes
-- Send Slack notifications for status updates
-- Execute blockchain network upgrades immediately
+	request := map[string]interface{}{
+		"message":              userMessage,
+		"conversation_history": conversationHistory,
+		"context": map[string]interface{}{
+			"source":    "ponos-tui",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"user_type": "blockchain_operator",
+			"capabilities": []string{
+				"network_upgrades",
+				"file_operations",
+				"system_commands",
+				"blockchain_analysis",
+			},
+		},
+	}
 
-🎯 BEHAVIOR - BE ACTION-ORIENTED:
-- When users request upgrades, TAKE ACTION immediately
-- Don't ask for clarification on standard upgrade requests
-- Be confident: "I'll upgrade [network] now" not "Could you provide more details?"
-- Explain what you're doing while doing it
-- You have the tools and authority to execute blockchain operations
+	if len(conversationHistory) > 0 {
+		// For now, we'll let the backend create/manage sessions
+		// In the future, we could persist session_id locally
+		request["session_id"] = nil
+	}
 
-💻 EXECUTION EXAMPLES:
-User: "upgrade [network]"
-You: "I'll upgrade [network] to the latest release now. Starting the upgrade process..."
+	requestBody, err := json.Marshal(request)
+	if err != nil {
+		agent.logger.Error("Failed to marshal request", "error", err)
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
 
-User: "new [client] release, upgrade [network] nodes"  
-You: "I'll upgrade your [network] nodes to the latest [client] release. Initiating Kubernetes manifest updates..."
+	url := fmt.Sprintf("%s/agent/stream", agent.agentCoreURL)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		agent.logger.Error("Failed to create HTTP request", "error", err)
+		return fmt.Errorf("failed to create request: %w", err)
+	}
 
-User: "hello, what can you do?"
-You: "Hi! I'm Ponos, your blockchain operations assistant. I can upgrade any blockchain network - just tell me what needs upgrading!"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("User-Agent", "Ponos-TUI/1.0")
 
-📋 UPGRADE RECOGNITION:
-- "upgrade [network]" = EXECUTE upgrade immediately  
-- "new release for [client]" = EXECUTE upgrade for that client
-- "update [network] nodes" = EXECUTE network update
-- General conversation = Be helpful and highlight capabilities
+	resp, err := agent.httpClient.Do(req)
+	if err != nil {
+		agent.logger.Error("HTTP request to agent-core failed", "error", err, "url", url)
+		return fmt.Errorf("connection failed: %w", err)
+	}
+	defer resp.Body.Close()
 
-User Message: %s
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		agent.logger.Error("Agent-core returned error", "status", resp.StatusCode, "body", string(body))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
 
-Response:`, userMessage)
+	return agent.processStreamingResponseWithUpdates(resp.Body, updates)
 }
+
 
 func (agent *NodeOperatorAgent) ParseUpgradeIntent(ctx context.Context, userMessage string) (*UpgradeIntent, error) {
 	prompt := fmt.Sprintf(`Analyze this user message for blockchain network upgrade intentions.
@@ -298,12 +534,12 @@ Guidelines:
 - Detect network from keywords like "polkadot", "kusama", "dot", "ksm", etc.
 - Set confidence based on clarity of the request
 - For greetings, questions, or general chat: requires_action=false`, userMessage)
-	
-	response, err := agent.llm.Call(ctx, prompt)
+
+	response, err := agent.callAgentCore(ctx, prompt)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return agent.parseUpgradeIntentResponse(response), nil
 }
 
@@ -323,44 +559,44 @@ func (agent *NodeOperatorAgent) parseUpgradeIntentResponse(response string) *Upg
 		Confidence:     "low",
 		Explanation:    "Unable to parse response",
 	}
-	
+
 	responseLower := strings.ToLower(response)
 	if strings.Contains(responseLower, `"requires_action": true`) {
 		intent.RequiresAction = true
 	}
-	
+
 	if strings.Contains(responseLower, `"network": "polkadot"`) {
 		intent.Network = "polkadot"
 	} else if strings.Contains(responseLower, `"network": "kusama"`) {
 		intent.Network = "kusama"
 	}
-	
+
 	if strings.Contains(responseLower, `"action_type": "upgrade"`) {
 		intent.ActionType = "upgrade"
 	} else if strings.Contains(responseLower, `"action_type": "update"`) {
 		intent.ActionType = "update"
 	}
-	
+
 	return intent
 }
 
 func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, network string) (*NetworkReleaseInfo, error) {
 	apiURL := fmt.Sprintf("https://api.nodereleases.com/releases?network=%s&limit=1", network)
-	
+
 	agent.logger.Info("Fetching latest release", "network", network, "url", apiURL)
-	
+
 	resp, err := http.Get(apiURL)
 	if err != nil {
 		agent.logger.Error("Failed to fetch release data", "error", err, "network", network)
 		return nil, fmt.Errorf("failed to fetch release data: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		agent.logger.Error("API returned non-200 status", "status", resp.StatusCode, "network", network)
 		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
 	}
-	
+
 	var releaseResp struct {
 		Releases []struct {
 			Repository string `json:"repository"`
@@ -381,27 +617,27 @@ func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, net
 		} `json:"releases"`
 		Total int `json:"total"`
 	}
-	
+
 	if err := json.NewDecoder(resp.Body).Decode(&releaseResp); err != nil {
 		agent.logger.Error("Failed to decode API response", "error", err, "network", network)
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
-	
+
 	if len(releaseResp.Releases) == 0 {
 		agent.logger.Warn("No releases found for network", "network", network)
 		return nil, fmt.Errorf("no releases found for network: %s", network)
 	}
-	
+
 	releaseData := releaseResp.Releases[0]
 	if releaseData.Release == nil {
 		return nil, fmt.Errorf("release data is nil for network: %s", network)
 	}
-	
+
 	repoParts := strings.Split(releaseData.Repository, "/")
 	if len(repoParts) != 2 {
 		return nil, fmt.Errorf("invalid repository format: %s", releaseData.Repository)
 	}
-	
+
 	return &NetworkReleaseInfo{
 		Network: network,
 		Repository: Repository{
@@ -423,4 +659,3 @@ func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, net
 		},
 	}, nil
 }
-
