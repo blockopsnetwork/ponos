@@ -24,7 +24,7 @@ func (y *YAMLOperations) ExtractMainApplicationRepos(yamlContent string) []strin
 
 	var repos []string
 	repoSet := make(map[string]bool)
-	
+
 	var walk func(n *yaml.Node)
 	walk = func(n *yaml.Node) {
 		if n == nil {
@@ -79,12 +79,12 @@ func (y *YAMLOperations) extractRepo(node *yaml.Node) string {
 func (y *YAMLOperations) IsMainContainer(containerName, imageRepo string) bool {
 	containerName = strings.ToLower(containerName)
 	imageRepo = strings.ToLower(imageRepo)
-	
+
 	knownMainRepos := map[string]bool{
-		"parity/polkadot": true,
+		"parity/polkadot":     true,
 		"paritytech/polkadot": true,
-		"ethereum/client-go": true,
-		"hyperledger/fabric": true,
+		"ethereum/client-go":  true,
+		"hyperledger/fabric":  true,
 	}
 	if knownMainRepos[imageRepo] {
 		return true
@@ -114,7 +114,7 @@ func (y *YAMLOperations) UpdateAllImageTagsYAML(yamlContent string, repoToTag ma
 	if err := yaml.Unmarshal([]byte(yamlContent), &root); err != nil {
 		return "", false, err
 	}
-	
+
 	var updated bool
 	var walk func(n *yaml.Node)
 	walk = func(n *yaml.Node) {
@@ -137,17 +137,17 @@ func (y *YAMLOperations) UpdateAllImageTagsYAML(yamlContent string, repoToTag ma
 			}
 		}
 	}
-	
+
 	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
 		walk(root.Content[0])
 	} else {
 		walk(&root)
 	}
-	
+
 	if !updated {
 		return yamlContent, false, nil
 	}
-	
+
 	var b strings.Builder
 	encoder := yaml.NewEncoder(&b)
 	encoder.SetIndent(2)

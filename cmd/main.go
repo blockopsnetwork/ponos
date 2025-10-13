@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/blockops-sh/ponos/config"
+	"github.com/joho/godotenv"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 )
@@ -51,12 +52,15 @@ type Bot struct {
 	client        *slack.Client
 	config        *config.Config
 	logger        *slog.Logger
-	mcpClient     *GitHubMCPClient
+	mcpClient     *MCPHTTPClient
 	agent         *NodeOperatorAgent
 	githubHandler *GitHubDeployHandler
 }
 
 func main() {
+	// Load environment variables from .env file if it exists
+	loadEnvFile()
+
 	flag.Parse()
 
 	if len(os.Args) > 1 && os.Args[1] == "server" {
@@ -65,6 +69,19 @@ func main() {
 	}
 
 	runAgentTUI()
+}
+
+// loadEnvFile loads environment variables from .env file if it exists
+func loadEnvFile() {
+	if err := godotenv.Load(); err != nil {
+		// .env file is optional, so we just log a debug message if it's not found
+		// This prevents errors when running in production or CI environments
+		if !os.IsNotExist(err) {
+			slog.Debug("Error loading .env file", "error", err)
+		}
+	} else {
+		slog.Debug("Loaded environment variables from .env file")
+	}
 }
 
 func runServer() {
@@ -76,7 +93,7 @@ func runServer() {
 		logger.Error("failed to load configuration", "error", err)
 		os.Exit(1)
 	}
-	
+
 	// Validate GitHub bot configurationac
 	if err := cfg.ValidateGitHubBotConfig(); err != nil {
 		logger.Error("GitHub bot configuration error", "error", err)
@@ -86,8 +103,8 @@ func runServer() {
 
 	api := slack.New(cfg.SlackToken)
 
-	mcpClient := NewGitHubMCPClient(
-		"https://api.githubcopilot.com/mcp/",
+	mcpClient := NewMCPHTTPClient(
+		"http://localhost:3001",
 		cfg.GitHubToken,
 		cfg.GitHubAppID,
 		cfg.GitHubInstallID,
@@ -161,18 +178,13 @@ func runAgentTUI() {
 		logger.Error("failed to load configuration", "error", err)
 		os.Exit(1)
 	}
-	
-	// Validate GitHub bot configuration
-	if err := cfg.ValidateGitHubBotConfig(); err != nil {
-		logger.Error("GitHub bot configuration error", "error", err)
-		logger.Info("See config/config.go for setup instructions")
-		os.Exit(1)
-	}
+
+	// Skip GitHub validation in TUI mode - only needed for server/webhook mode
 
 	api := slack.New(cfg.SlackToken)
 
-	mcpClient := NewGitHubMCPClient(
-		"https://api.githubcopilot.com/mcp/",
+	mcpClient := NewMCPHTTPClient(
+		"http://localhost:3001",
 		cfg.GitHubToken,
 		cfg.GitHubAppID,
 		cfg.GitHubInstallID,
@@ -183,8 +195,8 @@ func runAgentTUI() {
 
 	agent, err := NewNodeOperatorAgent(logger)
 	if err != nil {
-		logger.Error("failed to create AI agent", "error", err)
-		os.Exit(1)
+		logger.Warn("failed to create AI agent", "error", err)
+		agent = nil // Continue without agent - TUI will show error message
 	}
 
 	bot := &Bot{

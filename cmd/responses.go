@@ -77,9 +77,9 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 	if botName == "" {
 		botName = "Ponos"
 	}
-	
+
 	title = fmt.Sprintf("%s: Update %s to %s", botName, networkName, releaseTag)
-	
+
 	body = fmt.Sprintf(`## 🤖 Automated Update by %s
 
 **NodeOperator AI Analysis:**
@@ -107,46 +107,13 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 		strings.ToUpper(summary.Severity),
 		botName,
 		botName)
-	
+
 	commitMessage = fmt.Sprintf("🤖 %s: Update %s to %s\n\n%s", botName, networkName, releaseTag, summary.ReleaseSummary)
-	
+
 	return title, body, commitMessage
 }
 
-func BuildAIAnalysisPrompt(payload ReleasesWebhookPayload) string {
-	var repoInfo, releaseInfo string
-
-	for _, repo := range payload.Repositories {
-		repoInfo += fmt.Sprintf("Repository: %s/%s (%s)\nNetwork: %s\nClient Type: %s\n",
-			repo.Owner, repo.Name, repo.DisplayName, repo.NetworkName, repo.ClientType)
-	}
-
-	for key, release := range payload.Releases {
-		// Truncate release body to prevent token limit issues, but keep important info
-		releaseBody := release.Body
-		if len(releaseBody) > 4000 {
-			releaseBody = releaseBody[:4000] + "\n\n[Release notes truncated - first 4000 chars shown for analysis]"
-		}
-		
-		releaseInfo += fmt.Sprintf("Release: %s\nTag: %s\nName: %s\nPrerelease: %t\nPublished: %s\n\nRELEASE NOTES:\n%s\n\n",
-			key, release.TagName, release.Name, release.Prerelease, release.PublishedAt, releaseBody)
-	}
-
-	prompt := fmt.Sprintf(`Analyze this blockchain release:
-
-%s
-%s
-
-Provide structured analysis:
-
-RELEASE SUMMARY: Key changes, features, fixes from release notes.
-SEVERITY ASSESSMENT: Rate as low/medium/high/critical based on security fixes, performance, breaking changes.
-CONFIGURATION CHANGES: Required config/deployment changes, or "None mentioned".
-RISK ASSESSMENT: Risks of updating vs not updating.
-DOCKER TAG: Based on the GitHub release tag and release notes, determine the correct Docker image tag to use. Consider version mappings mentioned in release notes, network-specific patterns (e.g., Polkadot "stable####"), and how the GitHub release tag should map to Docker tag format.`, releaseInfo, repoInfo)
-
-	return prompt
-}
+// Removed BuildAIAnalysisPrompt - migrated to agent-core blockchain.py
 
 // Slack block utility functions
 func createStatusBlock(icon, title string) slack.Block {

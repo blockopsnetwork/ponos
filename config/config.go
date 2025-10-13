@@ -8,13 +8,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-
 type Config struct {
-	GitHubToken     string `envconfig:"GITHUB_TOKEN" default:""`        
-	GitHubAppID     string `envconfig:"GITHUB_APP_ID" default:""`      
-	GitHubInstallID string `envconfig:"GITHUB_INSTALL_ID" default:""`  
-	GitHubPEMKey    string `envconfig:"GITHUB_PEM_KEY" default:""`      
-	GitHubBotName   string `envconfig:"GITHUB_BOT_NAME" default:"ponos-bot"` 
+	GitHubToken     string `envconfig:"GITHUB_TOKEN" default:""`
+	GitHubAppID     string `envconfig:"GITHUB_APP_ID" default:""`
+	GitHubInstallID string `envconfig:"GITHUB_INSTALL_ID" default:""`
+	GitHubPEMKey    string `envconfig:"GITHUB_PEM_KEY" default:""`
+	GitHubBotName   string `envconfig:"GITHUB_BOT_NAME" default:"ponos-bot"`
 
 	SlackToken         string `envconfig:"SLACK_TOKEN" default:""`
 	SlackSigningKey    string `envconfig:"SLACK_SIGNING_SECRET" default:""`
@@ -51,18 +50,18 @@ func (c *Config) ValidateGitHubBotConfig() error {
 			return fmt.Errorf("GITHUB_APP_ID is required when using GitHub App authentication")
 		}
 		if c.GitHubInstallID == "" {
-			return fmt.Errorf("GITHUB_INSTALL_ID is required when using GitHub App authentication") 
+			return fmt.Errorf("GITHUB_INSTALL_ID is required when using GitHub App authentication")
 		}
 		if c.GitHubPEMKey == "" {
 			return fmt.Errorf("GITHUB_PEM_KEY is required when using GitHub App authentication")
 		}
 		return nil
 	}
-	
+
 	if c.GitHubToken == "" {
 		return fmt.Errorf("either GitHub App credentials (GITHUB_APP_ID, GITHUB_INSTALL_ID, GITHUB_PEM_KEY) or GITHUB_TOKEN is required")
 	}
-	
+
 	return nil
 }
 

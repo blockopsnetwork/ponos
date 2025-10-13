@@ -24,7 +24,7 @@ func NewWebhookHandler(bot *Bot) *WebhookHandler {
 	return &WebhookHandler{
 		bot:                  bot,
 		agent:                bot.agent,
-		AgentFeedbackChannel: "sre-tasks", 
+		AgentFeedbackChannel: "sre-tasks",
 	}
 }
 
