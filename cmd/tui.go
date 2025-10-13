@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"os"
 	"strings"
 	"time"
@@ -15,55 +16,65 @@ import (
 )
 
 var (
-	brandColor    = lipgloss.Color("#9333EA") // Purple
-	textColor     = lipgloss.Color("#E1E8ED") // Light gray
-	subtleColor   = lipgloss.Color("#8B949E") // Muted gray
-	errorColor    = lipgloss.Color("#F85149") // Red
-	successColor  = lipgloss.Color("#3FB950") // Green
-
+	brandColor   = lipgloss.Color("#8B5CF6") // purple
+	textColor    = lipgloss.Color("#E5E7EB") // light gray
+	subtleColor  = lipgloss.Color("#9CA3AF") // muted text
+	successColor = lipgloss.Color("#10B981") // green for success
+	errorColor   = lipgloss.Color("#EF4444") // red for errors
+	accentColor  = lipgloss.Color("#F59E0B") // yello for highlights
 
 	logoStyle = lipgloss.NewStyle().
-		Foreground(brandColor).
-		Bold(true)
+			Foreground(brandColor).
+			Bold(true)
 
-	infoStyle = lipgloss.NewStyle().
-		Foreground(subtleColor)
+	titleStyle = lipgloss.NewStyle().
+			Foreground(textColor).
+			Bold(true)
 
-	cwdStyle = lipgloss.NewStyle().
-		Foreground(textColor)
+	subtitleStyle = lipgloss.NewStyle().
+			Foreground(subtleColor)
 
 	promptStyle = lipgloss.NewStyle().
-		Foreground(brandColor).
-		Bold(true)
+			Foreground(brandColor).
+			Bold(true)
 
 	userMessageStyle = lipgloss.NewStyle().
-		Foreground(textColor)
+				Foreground(brandColor)
 
 	assistantMessageStyle = lipgloss.NewStyle().
-		Foreground(successColor)
-
-	errorMessageStyle = lipgloss.NewStyle().
-		Foreground(errorColor)
+				Foreground(textColor)
 
 	systemMessageStyle = lipgloss.NewStyle().
-		Foreground(subtleColor)
+				Foreground(subtleColor)
 
-	loadingStyle = lipgloss.NewStyle().
-		Foreground(brandColor).
-		Bold(true)
+	errorMessageStyle = lipgloss.NewStyle().
+				Foreground(errorColor)
+
+	successMessageStyle = lipgloss.NewStyle().
+				Foreground(successColor)
 
 	helpStyle = lipgloss.NewStyle().
-		Foreground(subtleColor)
+			Foreground(subtleColor)
+
+	activityStyle = lipgloss.NewStyle().
+			Foreground(subtleColor).
+			Italic(true)
 )
 
 const (
-	ponosLogo = `██████   ██████  ███    ██  ██████  ███████ 
-██   ██ ██    ██ ████   ██ ██    ██ ██      
-██████  ██    ██ ██ ██  ██ ██    ██ ███████ 
-██      ██    ██ ██  ██ ██ ██    ██      ██ 
-██       ██████  ██   ████  ██████  ███████`
+	appName = "Ponos Agent"
+	version = "v0.1.0"
 
-	version = "0.1.0"
+	asciiLogo = `
+██████╗  ██████╗ ███╗   ██╗ ██████╗ ███████╗
+██╔══██╗██╔═══██╗████╗  ██║██╔═══██╗██╔════╝
+██████╔╝██║   ██║██╔██╗ ██║██║   ██║███████╗
+██╔═══╝ ██║   ██║██║╚██╗██║██║   ██║╚════██║
+██║     ╚██████╔╝██║ ╚████║╚██████╔╝███████║
+╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚══════╝
+                                              
+    Node Operator AI Agent                
+`
 )
 
 type PonosAgentTUI struct {
@@ -72,24 +83,25 @@ type PonosAgentTUI struct {
 }
 
 type tuiModel struct {
-	viewport   viewport.Model
-	textarea   textarea.Model
-	messages   []ChatMessage
-	ready      bool
-	width      int
-	height     int
-	tui           *PonosAgentTUI
-	loading       bool
-	currentDir    string
-	thoughtMsg    string
-	spinnerFrame  int
-	loadingText   string
-	program       *tea.Program
-	cancelThinking context.CancelFunc
+	viewport            viewport.Model
+	textarea            textarea.Model
+	messages            []ChatMessage
+	conversationHistory []map[string]string // Track conversation for LLM context
+	sessionID           string              // Current session checkpoint ID
+	ready               bool
+	width               int
+	height              int
+	tui                 *PonosAgentTUI
+	loading             bool
+	loadingMsg          string
+	currentDir          string
+	program             *tea.Program
+	cancelThinking      context.CancelFunc
+	showHelp            bool
 }
 
 type ChatMessage struct {
-	Role      string    // "user", "assistant", "system", "error"
+	Role      string // "user", "assistant", "system", "error"
 	Content   string
 	Timestamp time.Time
 	Actions   []string // Actions performed
@@ -100,19 +112,12 @@ type msgResponse struct {
 	err     error
 }
 
-type loadingMsg struct {
-	loading bool
-}
-
 type thoughtMsg struct {
 	thought string
 }
 
-type spinnerTick struct{}
-
-type progressUpdate struct {
-	thought     string
-	loadingText string
+type streamingUpdate struct {
+	update StreamingUpdate
 }
 
 func NewPonosAgentTUI(bot *Bot, logger *slog.Logger) *PonosAgentTUI {
@@ -125,10 +130,10 @@ func NewPonosAgentTUI(bot *Bot, logger *slog.Logger) *PonosAgentTUI {
 func (tui *PonosAgentTUI) Start() error {
 	model := tui.initModel()
 	p := tea.NewProgram(
-		&model,  
+		&model,
 		tea.WithAltScreen(),
 	)
-	
+
 	model.program = p
 
 	_, err := p.Run()
@@ -142,29 +147,56 @@ func (tui *PonosAgentTUI) initModel() tuiModel {
 	}
 
 	ta := textarea.New()
-	ta.Placeholder = ""
+	ta.Placeholder = "->"
 	ta.Focus()
 	ta.Prompt = ""
 	ta.CharLimit = 2000
-	ta.SetWidth(80)
-	ta.SetHeight(1) 
+	ta.SetWidth(75)
+	ta.SetHeight(3)
 	ta.ShowLineNumbers = false
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
-	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
+
+	ta.FocusedStyle.Base = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(brandColor).
+		Foreground(textColor)
+
+	ta.BlurredStyle.Base = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(subtleColor).
+		Foreground(subtleColor)
+
+	ta.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(subtleColor)
+	ta.BlurredStyle.Placeholder = lipgloss.NewStyle().Foreground(subtleColor)
 
 	vp := viewport.New(80, 20)
 
+	sessionID := generateSessionID()
+
 	m := tuiModel{
-		textarea:   ta,
-		viewport:   vp,
-		messages:   []ChatMessage{},
-		ready:      false,
-		tui:        tui,
-		loading:    false,
-		currentDir: cwd,
+		textarea:            ta,
+		viewport:            vp,
+		messages:            []ChatMessage{},
+		conversationHistory: []map[string]string{},
+		sessionID:           sessionID,
+		ready:               false,
+		tui:                 tui,
+		loading:             false,
+		loadingMsg:          "",
+		currentDir:          cwd,
+		showHelp:            true,
 	}
 
 	return m
+}
+
+func generateSessionID() string {
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		rand.Uint32(),
+		rand.Uint32()&0xffff,
+		rand.Uint32()&0xffff,
+		rand.Uint32()&0xffff,
+		rand.Uint64()&0xffffffffffff,
+	)
 }
 
 func (m *tuiModel) Init() tea.Cmd {
@@ -178,34 +210,36 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		if !m.ready {
-			headerHeight := 8  
-			loadingHeight := 1 
-			helpHeight := 1    
-			inputHeight := 4  
-			spacingHeight := 2 
-
-			messageHeight := msg.Height - headerHeight - loadingHeight - inputHeight - helpHeight - spacingHeight
-			if messageHeight < 3 {
-				messageHeight = 3
-			}
-			
-			m.viewport = viewport.New(msg.Width, messageHeight)
-			m.textarea.SetWidth(msg.Width - 8) 
-			m.ready = true
-		} else {
-			headerHeight := 8
+			logoHeight := 10 // ASCII logo height
+			titleHeight := 4 // Title section height
 			loadingHeight := 1
 			helpHeight := 1
 			inputHeight := 4
-			spacingHeight := 2
-			messageHeight := msg.Height - headerHeight - loadingHeight - inputHeight - helpHeight - spacingHeight
+			spacingHeight := 3
+
+			messageHeight := msg.Height - logoHeight - titleHeight - loadingHeight - inputHeight - helpHeight - spacingHeight
+			if messageHeight < 3 {
+				messageHeight = 3
+			}
+
+			m.viewport = viewport.New(msg.Width, messageHeight)
+			m.textarea.SetWidth(msg.Width - 4)
+			m.ready = true
+		} else {
+			logoHeight := 10
+			titleHeight := 4
+			loadingHeight := 1
+			helpHeight := 1
+			inputHeight := 4
+			spacingHeight := 3
+			messageHeight := msg.Height - logoHeight - titleHeight - loadingHeight - inputHeight - helpHeight - spacingHeight
 			if messageHeight < 3 {
 				messageHeight = 3
 			}
 
 			m.viewport.Width = msg.Width
 			m.viewport.Height = messageHeight
-			m.textarea.SetWidth(msg.Width - 8)
+			m.textarea.SetWidth(msg.Width - 4)
 		}
 		m.width = msg.Width
 		m.height = msg.Height
@@ -218,14 +252,13 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEsc:
 			if m.loading {
 				m.loading = false
-				m.thoughtMsg = ""
-				m.loadingText = ""
-				
+				m.loadingMsg = ""
+
 				if m.cancelThinking != nil {
 					m.cancelThinking()
 					m.cancelThinking = nil
 				}
-				
+
 				m.messages = append(m.messages, ChatMessage{
 					Role:      "system",
 					Content:   "Operation interrupted by user",
@@ -237,94 +270,192 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			userInput := strings.TrimSpace(m.textarea.Value())
 			if userInput != "" && !m.loading {
+				if strings.HasPrefix(userInput, "/") {
+					switch userInput {
+					case "/h", "/help":
+						m.showHelp = !m.showHelp
+						m.textarea.Reset()
+						return m, nil
+					case "/status":
+						// Add status message
+						m.messages = append(m.messages, ChatMessage{
+							Role:      "system",
+							Content:   "Ponos Agent is running. Type /h for help.",
+							Timestamp: time.Now(),
+						})
+						m.textarea.Reset()
+						m.updateViewportContent()
+						return m, nil
+					case "/clear":
+						m.messages = []ChatMessage{}
+						m.textarea.Reset()
+						m.updateViewportContent()
+						return m, nil
+					default:
+						m.messages = append(m.messages, ChatMessage{
+							Role:      "system",
+							Content:   fmt.Sprintf("Unknown command: %s. Type /h for help.", userInput),
+							Timestamp: time.Now(),
+						})
+						m.textarea.Reset()
+						m.updateViewportContent()
+						return m, nil
+					}
+				}
+
 				m.messages = append(m.messages, ChatMessage{
 					Role:      "user",
 					Content:   userInput,
 					Timestamp: time.Now(),
 				})
-				
+
+				// Add to conversation history for LLM context
+				m.conversationHistory = append(m.conversationHistory, map[string]string{
+					"role":    "user",
+					"content": userInput,
+				})
+
 				m.textarea.Reset()
 				m.loading = true
-				m.thoughtMsg = "Thinking"
-				m.loadingText = "Ponosing..."
+				m.loadingMsg = "Processing your request..."
 				m.updateViewportContent()
-				
+
 				ctx, cancel := context.WithCancel(context.Background())
 				m.cancelThinking = cancel
-				
+
 				program := m.program
 				go func() {
-					m.tui.logger.Info("Starting async processing", "input", userInput)
-					
-					if program != nil {
-						m.tui.logger.Info("Sending progress update")
-						program.Send(progressUpdate{
-							thought:     "Understanding request",
-							loadingText: "Thinking...",
-						})
+					m.tui.logger.Info("Starting streaming processing", "input", userInput)
+
+					// Create a channel for streaming updates
+					updates := make(chan StreamingUpdate, 10)
+
+					// Process streaming conversation in a separate goroutine
+					go func() {
+						defer close(updates)
+						err := m.tui.handleUserInputWithStreaming(ctx, userInput, m.conversationHistory, updates)
+						if err != nil {
+							m.tui.logger.Error("Streaming processing failed", "error", err)
+							if program != nil {
+								program.Send(msgResponse{content: "", err: err})
+							}
+						}
+					}()
+
+					var finalResponse string
+					for update := range updates {
+						select {
+						case <-ctx.Done():
+							m.tui.logger.Info("Processing cancelled")
+							return
+						default:
+						}
+
+						if program != nil {
+							switch update.Type {
+							case "thinking":
+								program.Send(streamingUpdate{update: update})
+							case "tool_start":
+								program.Send(streamingUpdate{update: update})
+							case "tool_result":
+								program.Send(streamingUpdate{update: update})
+							case "assistant":
+								finalResponse = update.Message
+							case "complete":
+								program.Send(msgResponse{content: finalResponse, err: nil})
+								return
+							}
+						}
 					}
-					
-					m.tui.logger.Info("About to call handleUserInput")
-					response, err := m.tui.handleUserInput(userInput)
-					m.tui.logger.Info("handleUserInput completed", "response_length", len(response), "error", err)
-					
-					select {
-					case <-ctx.Done():
-						m.tui.logger.Info("Processing cancelled")
-						return
-					default:
-					}
-					
-					if program != nil {
-						m.tui.logger.Info("Sending final response")
-						program.Send(msgResponse{content: response, err: err})
-					} else {
-						m.tui.logger.Error("program is nil, cannot send response")
+
+					if finalResponse != "" && program != nil {
+						program.Send(msgResponse{content: finalResponse, err: nil})
 					}
 				}()
-				
-				return m, tea.Batch(
-					m.startLoading(),
-					m.tui.tickSpinner(),
-				)
+
+				return m, nil
 			}
 		}
 
 	case msgResponse:
 		m.loading = false
-		m.thoughtMsg = ""  
-		m.loadingText = "" 
-		m.cancelThinking = nil 
+		m.loadingMsg = ""
+		m.cancelThinking = nil
+
 		if msg.err != nil {
 			m.messages = append(m.messages, ChatMessage{
 				Role:      "error",
-				Content:   fmt.Sprintf("Error: %v", msg.err),
+				Content:   msg.err.Error(),
 				Timestamp: time.Now(),
 			})
-		} else {
+		} else if msg.content != "" {
 			m.messages = append(m.messages, ChatMessage{
 				Role:      "assistant",
 				Content:   msg.content,
 				Timestamp: time.Now(),
 			})
+
+			m.conversationHistory = append(m.conversationHistory, map[string]string{
+				"role":    "assistant",
+				"content": msg.content,
+			})
 		}
 		m.updateViewportContent()
 
-	case loadingMsg:
-		m.loading = msg.loading
-
 	case thoughtMsg:
-		m.thoughtMsg = msg.thought
+		m.loadingMsg = msg.thought
 
-	case progressUpdate:
-		m.thoughtMsg = msg.thought
-		m.loadingText = msg.loadingText
+	case streamingUpdate:
+		switch msg.update.Type {
+		case "thinking":
+			m.messages = append(m.messages, ChatMessage{
+				Role:      "activity",
+				Content:   msg.update.Message,
+				Timestamp: time.Now(),
+			})
+			m.updateViewportContent()
+		case "tool_start":
+			toolMsg := fmt.Sprintf("🔧 Executing %s...", msg.update.Tool)
+			m.messages = append(m.messages, ChatMessage{
+				Role:      "activity",
+				Content:   toolMsg,
+				Timestamp: time.Now(),
+			})
+			m.updateViewportContent()
+		case "tool_result":
+			var resultMsg string
+			if msg.update.Success {
+				resultMsg = fmt.Sprintf("%s completed successfully", msg.update.Tool)
+			} else {
+				resultMsg = fmt.Sprintf("%s failed", msg.update.Tool)
+			}
+			m.messages = append(m.messages, ChatMessage{
+				Role:      "activity",
+				Content:   resultMsg,
+				Timestamp: time.Now(),
+			})
+			m.updateViewportContent()
+		case "assistant":
+		case "complete":
+			m.loading = false
+			m.loadingMsg = ""
 
-	case spinnerTick:
-		if m.loading {
-			m.spinnerFrame++
-			return m, m.tui.tickSpinner()
+			if msg.update.SessionID != "" {
+				m.sessionID = msg.update.SessionID
+			}
+
+			if msg.update.CheckpointID != "" {
+				m.tui.logger.Info("Checkpoint created", "checkpoint_id", msg.update.CheckpointID, "session_id", msg.update.SessionID)
+			}
+		default:
+			m.messages = append(m.messages, ChatMessage{
+				Role:      "activity",
+				Content:   msg.update.Message,
+				Timestamp: time.Now(),
+			})
+			m.updateViewportContent()
 		}
+
 	}
 
 	m.textarea, cmd = m.textarea.Update(msg)
@@ -338,219 +469,90 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *tuiModel) View() string {
 	if !m.ready {
-		return loadingStyle.Render("Initializing Ponos Agent...")
+		return titleStyle.Render("Initializing Ponos Agent...")
 	}
 
-	header := logoStyle.Render(ponosLogo) + "\n" +
-		infoStyle.Render(fmt.Sprintf("Current Version: %s", version)) + "\n" +
-		infoStyle.Render("/help for help, /status for your current setup") + "\n" +
-		cwdStyle.Render(fmt.Sprintf("cwd: %s", m.currentDir)) + "\n"
+	var sections []string
 
-	separatorLine := strings.Repeat("─", m.width-2)
-	separator := lipgloss.NewStyle().Foreground(subtleColor).Render(separatorLine)
-	
-	messagesView := m.viewport.View()
-	if len(m.messages) == 0 {
-		messagesView = "" 
-	}
+	logoSection := logoStyle.Render(asciiLogo)
+	sections = append(sections, logoSection)
 
-	loadingIndicator := ""
-	if m.loading {
-		loadingIndicator = " " + loadingStyle.Render("●")
-	}
-	
-	inputContent := promptStyle.Render("> ") + m.textarea.View() + loadingIndicator
-	inputBox := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(subtleColor).
-		Padding(0, 1).
-		Width(m.width - 2).
-		Render(inputContent)
-	
-	inputView := inputBox
-	
-	loadingView := m.renderLoadingLine()
-	
-	thoughtView := ""
-	if m.thoughtMsg != "" {
-		thoughtView = "\n" + lipgloss.NewStyle().
-			Foreground(brandColor).
-			Italic(true).
-			Render("✽ " + m.thoughtMsg + "… (esc to interrupt)")
-	}
+	titleSection := titleStyle.Render(appName) + " " + subtitleStyle.Render(version) + "\n" +
+		subtitleStyle.Render("Node Operator AI Assistant") + "\n" +
+		subtitleStyle.Render(fmt.Sprintf("Working Directory: %s", m.currentDir)) + "\n" +
+		subtitleStyle.Render("profile: default")
 
-	helpText := helpStyle.Render("? for shortcuts")
+	sections = append(sections, titleSection)
 
-	if len(m.messages) == 0 {
-		return header + "\n" + loadingView + "\n" + inputView + thoughtView + "\n" + helpText
+	if len(m.messages) > 0 {
+		sections = append(sections, m.viewport.View())
 	} else {
-		return header + "\n" + separator + "\n" + messagesView + "\n" + loadingView + "\n" + inputView + thoughtView + "\n" + helpText
+		checkpointLine := strings.Repeat("─", max(0, m.width-20)) + "checkpoint " + m.sessionID + strings.Repeat("─", 10)
+		sections = append(sections, subtitleStyle.Render(checkpointLine))
 	}
+
+	if m.loading {
+		loadingText := m.loadingMsg
+		if loadingText == "" {
+			loadingText = "Processing..."
+		}
+		sections = append(sections, systemMessageStyle.Render("● "+loadingText))
+	}
+
+	sections = append(sections, m.textarea.View())
+
+	bottomRight := "⌘K to generate a command"
+	if m.loading {
+		bottomRight = "● Processing..."
+	}
+	helpText := helpStyle.Render("Press 'h' for help • Ctrl+C to quit • Enter to send") +
+		strings.Repeat(" ", max(0, m.width-len("Press 'h' for help • Ctrl+C to quit • Enter to send")-len(bottomRight))) +
+		helpStyle.Render(bottomRight)
+	sections = append(sections, helpText)
+
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
 func (m *tuiModel) updateViewportContent() {
 	var content strings.Builder
-	
-	availableWidth := m.viewport.Width - 4
-	if availableWidth < 20 {
-		availableWidth = 20 
-	}
-	
+
 	for _, msg := range m.messages {
-		timestamp := msg.Timestamp.Format("15:04:05")
-		
 		var prefix, text string
 		var style lipgloss.Style
-		
+
 		switch msg.Role {
 		case "user":
-			prefix = fmt.Sprintf("[%s] You: ", timestamp)
+			prefix = "-> "
 			text = msg.Content
 			style = userMessageStyle
 		case "assistant":
-			prefix = fmt.Sprintf("[%s] Ponos: ", timestamp)
+			prefix = ""
 			text = msg.Content
 			style = assistantMessageStyle
-		case "error":
-			prefix = fmt.Sprintf("[%s] Error: ", timestamp)
-			text = msg.Content
-			style = errorMessageStyle
 		case "system":
-			prefix = fmt.Sprintf("[%s] System: ", timestamp)
+			prefix = ""
 			text = msg.Content
 			style = systemMessageStyle
+		case "error":
+			prefix = "Error: "
+			text = msg.Content
+			style = errorMessageStyle
+		case "activity":
+			prefix = ""
+			text = msg.Content
+			style = activityStyle
 		}
-		
-		wrappedContent := wrapText(prefix+text, availableWidth)
-		content.WriteString(style.Render(wrappedContent))
+
+		if prefix != "" {
+			content.WriteString(style.Render(prefix + text))
+		} else {
+			content.WriteString(style.Render(text))
+		}
 		content.WriteString("\n\n")
 	}
-	
+
 	m.viewport.SetContent(content.String())
 	m.viewport.GotoBottom()
-}
-
-func wrapText(text string, width int) string {
-	if width <= 0 {
-		return text
-	}
-	
-	words := strings.Fields(text)
-	if len(words) == 0 {
-		return text
-	}
-	
-	var lines []string
-	var currentLine string
-	
-	for _, word := range words {
-		if currentLine == "" {
-			currentLine = word
-		} else {
-			testLine := currentLine + " " + word
-			if len(testLine) <= width {
-				currentLine = testLine
-			} else {
-				lines = append(lines, currentLine)
-				currentLine = word
-			}
-		}
-	}
-	
-	if currentLine != "" {
-		lines = append(lines, currentLine)
-	}
-	
-	return strings.Join(lines, "\n")
-}
-
-func (m tuiModel) startLoading() tea.Cmd {
-	return func() tea.Msg {
-		return loadingMsg{loading: true}
-	}
-}
-
-func (m tuiModel) renderLoadingLine() string {
-	if !m.loading {
-		return "" 
-	}
-	
-	spinnerChars := []string{"▐▌", "▄▄", "▀▀", "▐▌"}
-	spinner := spinnerChars[m.spinnerFrame%len(spinnerChars)]
-	
-	loadingText := "Ponosing..."
-	if m.loadingText != "" {
-		loadingText = m.loadingText
-	}
-	
-	return lipgloss.NewStyle().
-		Foreground(brandColor).
-		Bold(true).
-		Render(fmt.Sprintf("%s %s", spinner, loadingText))
-}
-
-func (tui *PonosAgentTUI) tickSpinner() tea.Cmd {
-	return tea.Tick(time.Millisecond*200, func(t time.Time) tea.Msg {
-		return spinnerTick{}
-	})
-}
-
-
-
-
-func (tui *PonosAgentTUI) handleUserInput(input string) (string, error) {
-	ctx := context.Background()
-	
-	tui.logger.Info("Processing user input", "input", input)
-	
-	switch {
-	case input == "/help":
-		tui.logger.Info("Handling help command")
-		return tui.getHelpText(), nil
-	case input == "/status":
-		tui.logger.Info("Handling status command")
-		return tui.getStatusText(), nil
-	case strings.HasPrefix(input, "/"):
-		tui.logger.Info("Unknown slash command", "input", input)
-		return "Unknown command. Type /help for available commands.", nil
-	}
-
-	if tui.bot.agent == nil {
-		tui.logger.Error("AI agent not available")
-		return "Sorry, the AI agent is not available. Please ensure OPENAI_API_KEY is set.", nil
-	}
-
-	tui.logger.Info("AI agent available, processing with AI")
-
-	if input == "test" {
-		tui.logger.Info("Test mode - simple AI call")
-		return "Test response: AI agent is working! Try asking 'hello, what can you do?'", nil
-	}
-
-	return tui.handleConversation(ctx, input)
-}
-
-func (tui *PonosAgentTUI) handleConversation(ctx context.Context, input string) (string, error) {
-	tui.logger.Info("Starting AI conversation", "input", input)
-	
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	
-	tui.logger.Info("Calling AI agent ProcessConversation")
-	response, err := tui.bot.agent.ProcessConversation(ctxWithTimeout, input)
-	
-	if err != nil {
-		tui.logger.Error("AI conversation failed", "error", err, "input", input)
-		return fmt.Sprintf("I'm having trouble thinking right now. Error: %v", err), nil
-	}
-	
-	if response.Error != nil {
-		tui.logger.Error("AI agent error", "error", response.Error, "input", input)
-		return fmt.Sprintf("AI agent error: %v", response.Error), nil
-	}
-	
-	tui.logger.Info("AI conversation successful", "response_length", len(response.Content))
-	return response.Content, nil
 }
 
 func (tui *PonosAgentTUI) getHelpText() string {
@@ -569,27 +571,128 @@ Just tell me what you'd like me to do in natural language!`
 
 func (tui *PonosAgentTUI) getStatusText() string {
 	status := "Current Setup Status:\n\n"
-	
+
 	if tui.bot.config.GitHubToken != "" {
-		status += "✅ GitHub Token configured\n"
+		status += "GitHub Token configured\n"
 	} else {
-		status += "❌ GitHub Token missing\n"
+		status += "GitHub Token missing\n"
 	}
-	
+
 	if tui.bot.config.SlackToken != "" {
-		status += "✅ Slack Token configured\n"
+		status += "Slack Token configured\n"
 	} else {
-		status += "❌ Slack Token missing\n"
+		status += "Slack Token missing\n"
 	}
-	
+
 	if tui.bot.agent != nil {
-		status += "✅ AI Agent available\n"
+		status += "llm available\n"
 	} else {
-		status += "❌ AI Agent unavailable (check OPENAI_API_KEY)\n"
+		status += "llm unavailable (check OPENAI_API_KEY)\n"
 	}
-	
+
 	cwd, _ := os.Getwd()
 	status += fmt.Sprintf("\nWorking Directory: %s", cwd)
-	
+
 	return status
+}
+
+func (tui *PonosAgentTUI) handleUserInputWithStreaming(ctx context.Context, input string, conversationHistory []map[string]string, updates chan<- StreamingUpdate) error {
+	tui.logger.Info("Processing user input with streaming", "input", input)
+
+	switch {
+	case input == "/help":
+		tui.logger.Info("Handling help command")
+		updates <- StreamingUpdate{Type: "assistant", Message: tui.getHelpText()}
+		updates <- StreamingUpdate{Type: "complete", Message: "Done"}
+		return nil
+	case input == "/status":
+		tui.logger.Info("Handling status command")
+		updates <- StreamingUpdate{Type: "assistant", Message: tui.getStatusText()}
+		updates <- StreamingUpdate{Type: "complete", Message: "Done"}
+		return nil
+	case strings.HasPrefix(input, "/"):
+		tui.logger.Info("Unknown slash command", "input", input)
+		updates <- StreamingUpdate{Type: "assistant", Message: "Unknown command. Type /help for available commands."}
+		updates <- StreamingUpdate{Type: "complete", Message: "Done"}
+		return nil
+	}
+
+	// Check if this is an upgrade/update request first
+	if tui.bot.agent != nil {
+		intent, err := tui.bot.agent.ParseUpgradeIntent(ctx, input)
+		if err == nil && intent != nil && intent.RequiresAction && (intent.ActionType == "upgrade" || intent.ActionType == "update") {
+			tui.logger.Info("Detected upgrade intent", "network", intent.Network, "action", intent.ActionType)
+			return tui.handleUpgradeRequest(ctx, intent, updates)
+		}
+	}
+
+	if tui.bot.agent == nil {
+		tui.logger.Error("Agent-core not available")
+		updates <- StreamingUpdate{Type: "assistant", Message: "Sorry, the agent-core backend is not available. Please ensure agent-core is running and accessible."}
+		updates <- StreamingUpdate{Type: "complete", Message: "Done"}
+		return nil
+	}
+
+	return tui.bot.agent.ProcessConversationWithStreamingAndHistory(ctx, input, conversationHistory, updates)
+}
+
+func (tui *PonosAgentTUI) handleUpgradeRequest(ctx context.Context, intent *UpgradeIntent, updates chan<- StreamingUpdate) error {
+	if intent.Network == "unknown" || intent.Network == "" {
+		updates <- StreamingUpdate{Type: "assistant", Message: "I couldn't determine which network you want to upgrade. Please specify the network (e.g., 'polkadot', 'kusama')."}
+		updates <- StreamingUpdate{Type: "complete", Message: "Done"}
+		return nil
+	}
+
+	// Send initial response using the same logic as Slack commands
+	updates <- StreamingUpdate{Type: "assistant", Message: fmt.Sprintf("🚀 Starting %s upgrade for %s network...", intent.ActionType, intent.Network)}
+	updates <- StreamingUpdate{Type: "activity", Message: fmt.Sprintf("Network update started for %s", intent.Network)}
+
+	// Use a goroutine with proper channel handling
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				tui.logger.Error("Panic in handleUpgradeRequest", "error", r)
+			}
+			// Use a safe send helper
+			tui.safeSendUpdate(updates, StreamingUpdate{Type: "complete", Message: "Done"})
+		}()
+
+		if tui.bot.githubHandler != nil {
+			// Call the same method that Slack commands use
+			response := tui.bot.githubHandler.HandleChainUpdate("network", intent.Network, "tui-user")
+
+			if response != nil {
+				// Convert SlashCommandResponse to streaming updates
+				if len(response.Blocks) > 0 {
+					// Extract text from blocks (simplified)
+					tui.safeSendUpdate(updates, StreamingUpdate{Type: "activity", Message: "Network update process initiated via GitHub workflow."})
+				} else if response.Text != "" {
+					tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: response.Text})
+				}
+			} else {
+				tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: "❌ Failed to initiate network upgrade. Check logs for details."})
+			}
+		} else {
+			tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: "❌ GitHub handler not available. Cannot process upgrade request."})
+		}
+	}()
+
+	return nil
+}
+
+// safeSendUpdate safely sends an update to the channel, recovering from panics
+func (tui *PonosAgentTUI) safeSendUpdate(updates chan<- StreamingUpdate, update StreamingUpdate) {
+	defer func() {
+		if r := recover(); r != nil {
+			tui.logger.Warn("Failed to send update - channel likely closed", "error", r, "update", update.Type)
+		}
+	}()
+
+	select {
+	case updates <- update:
+		// Success
+	default:
+		// Channel is likely full or closed, log but don't panic
+		tui.logger.Warn("Update channel blocked or closed", "update", update.Type)
+	}
 }

@@ -17,7 +17,7 @@ projects:
 
   - network: polkadot
     owner: blockops-sh
-    name: blockops-sre
+    name: blockops-srewjhatth
     branch: main 
     paths:
       - k8s/argocd-deployments/manifests/fullnodes/polkadot-archive-sec-test.yml
