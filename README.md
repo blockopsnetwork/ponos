@@ -54,3 +54,4 @@ The bot responds to the following slash commands in Slack:
 - `/deploy-api` - Deploy the API service
 
 more soon
+# nai-agent-core

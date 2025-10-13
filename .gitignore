@@ -1,4 +1,4 @@
 gh.pem 
 ./bin/ponos
 ponos.pem
-
+.env
