@@ -16,7 +16,8 @@ func NewDockerOperations() *DockerOperations {
 	return &DockerOperations{}
 }
 
-func (d *DockerOperations) FetchLatestStableTags(ctx context.Context, mcpClient *MCPHTTPClient, agent *NodeOperatorAgent, filesToUpdate []fileInfo) (*dockerTagResult, error) {
+
+func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClient *GitHubMCPClient, agent *NodeOperatorAgent, filesToUpdate []fileInfo) (*dockerTagResult, error) {
 	imageToTag := make(map[string]string)
 
 	for _, f := range filesToUpdate {
@@ -50,7 +51,7 @@ func (d *DockerOperations) FetchLatestStableTags(ctx context.Context, mcpClient 
 
 func (d *DockerOperations) fetchLatestStableTag(namespace, repo string) (string, error) {
 	url := fmt.Sprintf("https://hub.docker.com/v2/repositories/%s/%s/tags/?page_size=100", namespace, repo)
-
+	
 	resp, err := http.Get(url)
 	if err != nil {
 		return "", err
@@ -122,7 +123,7 @@ func (d *DockerOperations) extractImageReposWithLLM(ctx context.Context, agent *
 			return llmRepos
 		}
 	}
-
+	
 	yamlOps := NewYAMLOperations()
 	return yamlOps.ExtractImageReposFromYAML(yamlContent)
 }
