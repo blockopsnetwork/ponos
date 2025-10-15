@@ -2,3 +2,6 @@ gh.pem
 ./bin/ponos
 ponos.pem
 .env
+
+# Stakpak local files
+.stakpak
