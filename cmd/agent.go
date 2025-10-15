@@ -581,7 +581,8 @@ func (agent *NodeOperatorAgent) parseUpgradeIntentResponse(response string) *Upg
 }
 
 func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, network string) (*NetworkReleaseInfo, error) {
-	apiURL := fmt.Sprintf("https://api.nodereleases.com/releases?network=%s&limit=1", network)
+	// Fetch all releases for the network to filter properly
+	apiURL := fmt.Sprintf("https://api.nodereleases.com/releases?network=%s&limit=20", network)
 
 	agent.logger.Info("Fetching latest release", "network", network, "url", apiURL)
 
@@ -628,14 +629,61 @@ func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, net
 		return nil, fmt.Errorf("no releases found for network: %s", network)
 	}
 
-	releaseData := releaseResp.Releases[0]
-	if releaseData.Release == nil {
+	// Filter releases to get appropriate client type based on network
+	var selectedRelease *struct {
+		Repository string `json:"repository"`
+		Release    *struct {
+			TagName     string `json:"tag_name"`
+			Name        string `json:"name"`
+			Body        string `json:"body"`
+			HTMLURL     string `json:"html_url"`
+			PublishedAt string `json:"published_at"`
+			Prerelease  bool   `json:"prerelease"`
+			Draft       bool   `json:"draft"`
+		} `json:"release"`
+		Metadata *struct {
+			ClientType  string `json:"client_type"`
+			NetworkName string `json:"network_name"`
+			DisplayName string `json:"display_name"`
+		} `json:"metadata"`
+	}
+
+	// Define preferred client types for each network
+	preferredClientTypes := agent.getPreferredClientTypes(network)
+	agent.logger.Info("Looking for preferred client types", "network", network, "types", preferredClientTypes)
+
+	// Try to find a release with preferred client type
+	for _, preferredType := range preferredClientTypes {
+		for _, release := range releaseResp.Releases {
+			if release.Metadata != nil && strings.EqualFold(release.Metadata.ClientType, preferredType) {
+				selectedRelease = &release
+				agent.logger.Info("Selected release with preferred client type", 
+					"repository", release.Repository, 
+					"client_type", release.Metadata.ClientType,
+					"tag", release.Release.TagName)
+				break
+			}
+		}
+		if selectedRelease != nil {
+			break
+		}
+	}
+
+	// Fallback to first release if no preferred type found
+	if selectedRelease == nil {
+		selectedRelease = &releaseResp.Releases[0]
+		agent.logger.Warn("No preferred client type found, using first available", 
+			"repository", selectedRelease.Repository,
+			"client_type", selectedRelease.Metadata.ClientType if selectedRelease.Metadata != nil else "unknown")
+	}
+
+	if selectedRelease.Release == nil {
 		return nil, fmt.Errorf("release data is nil for network: %s", network)
 	}
 
-	repoParts := strings.Split(releaseData.Repository, "/")
+	repoParts := strings.Split(selectedRelease.Repository, "/")
 	if len(repoParts) != 2 {
-		return nil, fmt.Errorf("invalid repository format: %s", releaseData.Repository)
+		return nil, fmt.Errorf("invalid repository format: %s", selectedRelease.Repository)
 	}
 
 	return &NetworkReleaseInfo{
@@ -643,19 +691,38 @@ func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, net
 		Repository: Repository{
 			Owner:       repoParts[0],
 			Name:        repoParts[1],
-			DisplayName: releaseData.Metadata.DisplayName,
-			NetworkName: releaseData.Metadata.NetworkName,
-			ClientType:  releaseData.Metadata.ClientType,
-			ReleaseTag:  releaseData.Release.TagName,
+			DisplayName: selectedRelease.Metadata.DisplayName,
+			NetworkName: selectedRelease.Metadata.NetworkName,
+			ClientType:  selectedRelease.Metadata.ClientType,
+			ReleaseTag:  selectedRelease.Release.TagName,
 		},
 		Release: ReleaseInfo{
-			TagName:     releaseData.Release.TagName,
-			Name:        releaseData.Release.Name,
-			Body:        releaseData.Release.Body,
-			HTMLURL:     releaseData.Release.HTMLURL,
-			PublishedAt: releaseData.Release.PublishedAt,
-			Prerelease:  releaseData.Release.Prerelease,
-			Draft:       releaseData.Release.Draft,
+			TagName:     selectedRelease.Release.TagName,
+			Name:        selectedRelease.Release.Name,
+			Body:        selectedRelease.Release.Body,
+			HTMLURL:     selectedRelease.Release.HTMLURL,
+			PublishedAt: selectedRelease.Release.PublishedAt,
+			Prerelease:  selectedRelease.Release.Prerelease,
+			Draft:       selectedRelease.Release.Draft,
 		},
 	}, nil
+}
+
+// getPreferredClientTypes returns ordered list of preferred client types for each network
+func (agent *NodeOperatorAgent) getPreferredClientTypes(network string) []string {
+	switch strings.ToLower(network) {
+	case "ethereum":
+		// For Ethereum, prefer execution clients as they're more commonly deployed in infrastructure
+		// Consensus clients (Lighthouse, Nimbus, etc.) are typically paired with execution clients
+		return []string{"execution", "node", "consensus"}
+	case "polkadot", "kusama":
+		// For Polkadot/Kusama, nodes are the primary client type
+		return []string{"node", "parachain"}
+	case "solana":
+		// For Solana, validators are the main client type
+		return []string{"validator", "node"}
+	default:
+		// Default preference order for unknown networks
+		return []string{"node", "execution", "validator", "consensus"}
+	}
 }
