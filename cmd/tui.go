@@ -277,7 +277,6 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.textarea.Reset()
 						return m, nil
 					case "/status":
-						// Add status message
 						m.messages = append(m.messages, ChatMessage{
 							Role:      "system",
 							Content:   "Ponos Agent is running. Type /h for help.",
@@ -309,7 +308,6 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					Timestamp: time.Now(),
 				})
 
-				// Add to conversation history for LLM context
 				m.conversationHistory = append(m.conversationHistory, map[string]string{
 					"role":    "user",
 					"content": userInput,
@@ -617,7 +615,6 @@ func (tui *PonosAgentTUI) handleUserInputWithStreaming(ctx context.Context, inpu
 		return nil
 	}
 
-	// Check if this is an upgrade/update request first
 	if tui.bot.agent != nil {
 		intent, err := tui.bot.agent.ParseUpgradeIntent(ctx, input)
 		if err == nil && intent != nil && intent.RequiresAction && (intent.ActionType == "upgrade" || intent.ActionType == "update") {
@@ -643,28 +640,22 @@ func (tui *PonosAgentTUI) handleUpgradeRequest(ctx context.Context, intent *Upgr
 		return nil
 	}
 
-	// Send initial response using the same logic as Slack commands
-	updates <- StreamingUpdate{Type: "assistant", Message: fmt.Sprintf("🚀 Starting %s upgrade for %s network...", intent.ActionType, intent.Network)}
+	updates <- StreamingUpdate{Type: "assistant", Message: fmt.Sprintf("🚀 Starting %s for %s network...", intent.ActionType, intent.Network)}
 	updates <- StreamingUpdate{Type: "activity", Message: fmt.Sprintf("Network update started for %s", intent.Network)}
 
-	// Use a goroutine with proper channel handling
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				tui.logger.Error("Panic in handleUpgradeRequest", "error", r)
 			}
-			// Use a safe send helper
 			tui.safeSendUpdate(updates, StreamingUpdate{Type: "complete", Message: "Done"})
 		}()
 
 		if tui.bot.githubHandler != nil {
-			// Call the same method that Slack commands use
 			response := tui.bot.githubHandler.HandleChainUpdate("network", intent.Network, "tui-user")
 
 			if response != nil {
-				// Convert SlashCommandResponse to streaming updates
 				if len(response.Blocks) > 0 {
-					// Extract text from blocks (simplified)
 					tui.safeSendUpdate(updates, StreamingUpdate{Type: "activity", Message: "Network update process initiated via GitHub workflow."})
 				} else if response.Text != "" {
 					tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: response.Text})
@@ -680,7 +671,6 @@ func (tui *PonosAgentTUI) handleUpgradeRequest(ctx context.Context, intent *Upgr
 	return nil
 }
 
-// safeSendUpdate safely sends an update to the channel, recovering from panics
 func (tui *PonosAgentTUI) safeSendUpdate(updates chan<- StreamingUpdate, update StreamingUpdate) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -690,9 +680,7 @@ func (tui *PonosAgentTUI) safeSendUpdate(updates chan<- StreamingUpdate, update 
 
 	select {
 	case updates <- update:
-		// Success
 	default:
-		// Channel is likely full or closed, log but don't panic
 		tui.logger.Warn("Update channel blocked or closed", "update", update.Type)
 	}
 }
