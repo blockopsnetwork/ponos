@@ -63,7 +63,7 @@ var (
 
 const (
 	appName = "Ponos Agent"
-	version = "v0.1.0"
+	version = "v0.2.0"
 
 	asciiLogo = `
 ██████╗  ██████╗ ███╗   ██╗ ██████╗ ███████╗
@@ -98,6 +98,7 @@ type tuiModel struct {
 	program             *tea.Program
 	cancelThinking      context.CancelFunc
 	showHelp            bool
+	animationFrame      int                 // Current animation frame
 }
 
 type ChatMessage struct {
@@ -119,6 +120,8 @@ type thoughtMsg struct {
 type streamingUpdate struct {
 	update StreamingUpdate
 }
+
+type animationTick struct {}
 
 func NewPonosAgentTUI(bot *Bot, logger *slog.Logger) *PonosAgentTUI {
 	return &PonosAgentTUI{
@@ -147,7 +150,7 @@ func (tui *PonosAgentTUI) initModel() tuiModel {
 	}
 
 	ta := textarea.New()
-	ta.Placeholder = "->"
+	ta.Placeholder = "Deploy Polkadot parachain on paseo testnet"
 	ta.Focus()
 	ta.Prompt = ""
 	ta.CharLimit = 2000
@@ -316,10 +319,13 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textarea.Reset()
 				m.loading = true
 				m.loadingMsg = "Processing your request..."
+				m.animationFrame = 0
 				m.updateViewportContent()
 
 				ctx, cancel := context.WithCancel(context.Background())
 				m.cancelThinking = cancel
+
+				cmds = append(cmds, m.tickAnimation())
 
 				program := m.program
 				go func() {
@@ -454,6 +460,12 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateViewportContent()
 		}
 
+	case animationTick:
+		if m.loading {
+			m.animationFrame++
+			cmds = append(cmds, m.tickAnimation())
+		}
+
 	}
 
 	m.textarea, cmd = m.textarea.Update(msg)
@@ -485,30 +497,53 @@ func (m *tuiModel) View() string {
 	if len(m.messages) > 0 {
 		sections = append(sections, m.viewport.View())
 	} else {
-		checkpointLine := strings.Repeat("─", max(0, m.width-20)) + "checkpoint " + m.sessionID + strings.Repeat("─", 10)
+		checkpointText := "checkpoint " + m.sessionID
+		checkpointLen := len(checkpointText)
+		var checkpointLine string
+		if checkpointLen < m.width {
+			leftDashes := (m.width - checkpointLen) / 2
+			rightDashes := m.width - checkpointLen - leftDashes
+			checkpointLine = strings.Repeat("─", leftDashes) + checkpointText + strings.Repeat("─", rightDashes)
+		} else {
+			checkpointLine = checkpointText[:m.width]
+		}
 		sections = append(sections, subtitleStyle.Render(checkpointLine))
 	}
 
 	if m.loading {
 		loadingText := m.loadingMsg
 		if loadingText == "" {
-			loadingText = "Processing..."
+			loadingText = "Processing your request..."
 		}
-		sections = append(sections, systemMessageStyle.Render("● "+loadingText))
+		indicator := m.getAnimatedIndicator()
+		loadingLine := fmt.Sprintf("%s %s - Esc to cancel", indicator, loadingText)
+		sections = append(sections, systemMessageStyle.Render(loadingLine))
 	}
 
 	sections = append(sections, m.textarea.View())
 
-	bottomRight := "⌘K to generate a command"
+	bottomRight := "⌘P to generate a command to know what ponos can do for you"
 	if m.loading {
-		bottomRight = "● Processing..."
+		indicator := m.getAnimatedIndicator()
+		bottomRight = fmt.Sprintf("%s Processing...", indicator)
 	}
-	helpText := helpStyle.Render("Press 'h' for help • Ctrl+C to quit • Enter to send") +
-		strings.Repeat(" ", max(0, m.width-len("Press 'h' for help • Ctrl+C to quit • Enter to send")-len(bottomRight))) +
+	helpText := helpStyle.Render("/help for help and / to see available commands") +
+		strings.Repeat(" ", max(0, m.width-len("/help for help and / to see available commands")-len(bottomRight))) +
 		helpStyle.Render(bottomRight)
 	sections = append(sections, helpText)
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+}
+
+func (m *tuiModel) tickAnimation() tea.Cmd {
+	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
+		return animationTick{}
+	})
+}
+
+func (m *tuiModel) getAnimatedIndicator() string {
+	frames := []string{"▀▀", "▐▌", "▄▄", "▐▌"}
+	return frames[m.animationFrame%len(frames)]
 }
 
 func (m *tuiModel) updateViewportContent() {
@@ -557,6 +592,8 @@ func (tui *PonosAgentTUI) getHelpText() string {
 	return `Available commands:
 /help - Show this help message
 /status - Show current setup status
+
+Note: Type / to see command suggestions and available slash commands.
 
 Blockchain Operations:
 • "upgrade [network] to latest" - Upgrade any blockchain network
