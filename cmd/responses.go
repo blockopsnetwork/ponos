@@ -113,9 +113,7 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 	return title, body, commitMessage
 }
 
-// Removed BuildAIAnalysisPrompt - migrated to agent-core blockchain.py
 
-// Slack block utility functions
 func createStatusBlock(icon, title string) slack.Block {
 	return slack.NewSectionBlock(
 		slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("%s *%s*", icon, title), false, false),

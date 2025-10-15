@@ -45,11 +45,36 @@ type NetworkReleaseInfo struct {
 	Release    ReleaseInfo `json:"release"`
 }
 
+type InfrastructureContext struct {
+	DetectedClients    []DetectedClient `json:"detected_clients"`
+	DeploymentType     string          `json:"deployment_type"`
+	NetworkEnvironment string          `json:"network_environment"`
+	ConfiguredImages   []string        `json:"configured_images"`
+	Confidence         string          `json:"confidence"`
+}
+
+type DetectedClient struct {
+	Repository   string `json:"repository"`
+	CurrentTag   string `json:"current_tag"`
+	ClientType   string `json:"client_type"`
+	DockerImage  string `json:"docker_image"`
+	FilePath     string `json:"file_path"`
+	NetworkName  string `json:"network_name"`
+}
+
+type EnhancedUpgradeRequest struct {
+	UserMessage        string                  `json:"user_message"`
+	Intent            *UpgradeIntent          `json:"intent"`
+	Infrastructure    *InfrastructureContext  `json:"infrastructure"`
+	NeedsClarification bool                   `json:"needs_clarification"`
+	ClarificationPrompt string                `json:"clarification_prompt,omitempty"`
+	TargetClientType   string                `json:"target_client_type,omitempty"`
+}
+
 func NewNodeOperatorAgent(logger *slog.Logger) (*NodeOperatorAgent, error) {
-	// Check if agent-core should be used (preferred)
 	agentCoreURL := os.Getenv("AGENT_CORE_URL")
 	if agentCoreURL == "" {
-		agentCoreURL = "http://localhost:8001" // Default agent-core URL (updated port)
+		agentCoreURL = "http://localhost:8001" 
 	}
 
 	agent := &NodeOperatorAgent{
@@ -93,7 +118,6 @@ func (agent *NodeOperatorAgent) healthCheckAgentCore(ctx context.Context) error 
 	return nil
 }
 
-// callAgentCoreReleaseAnalysis sends release data to agent-core blockchain analysis endpoint
 func (agent *NodeOperatorAgent) callAgentCoreReleaseAnalysis(ctx context.Context, payload ReleasesWebhookPayload) (*AgentSummary, error) {
 	request := map[string]interface{}{
 		"repositories": payload.Repositories,
@@ -139,7 +163,6 @@ func (agent *NodeOperatorAgent) callAgentCoreReleaseAnalysis(ctx context.Context
 	return &analysisResult, nil
 }
 
-// callAgentCore sends a prompt to agent-core and returns the response content
 func (agent *NodeOperatorAgent) callAgentCore(ctx context.Context, prompt string) (string, error) {
 	request := map[string]interface{}{
 		"message": prompt,
@@ -288,7 +311,6 @@ func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Read
 }
 
 func (agent *NodeOperatorAgent) ProcessReleaseUpdate(ctx context.Context, payload ReleasesWebhookPayload) (*AgentSummary, error) {
-	// Use new specialized agent-core blockchain analysis endpoint
 	response, err := agent.callAgentCoreReleaseAnalysis(ctx, payload)
 	if err != nil {
 		agent.logger.Error("agent-core blockchain analysis failed", "error", err)
@@ -301,7 +323,6 @@ func (agent *NodeOperatorAgent) ProcessReleaseUpdate(ctx context.Context, payloa
 func (agent *NodeOperatorAgent) AnalyzeYAMLForBlockchainContainers(ctx context.Context, yamlContent string) ([]string, error) {
 	prompt := agent.buildYAMLAnalysisPrompt(yamlContent)
 
-	// Use agent-core for AI analysis
 	response, err := agent.callAgentCore(ctx, prompt)
 	if err != nil {
 		agent.logger.Error("agent-core YAML analysis failed", "error", err)
@@ -376,8 +397,6 @@ func (agent *NodeOperatorAgent) parseYAMLAnalysisResponse(response string) []str
 
 	return repos
 }
-
-// Removed parseLLMResponse and extractSection - migrated to agent-core blockchain.py
 
 type ConversationResponse struct {
 	Content  string
@@ -477,7 +496,7 @@ func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreamingAndHist
 
 	if len(conversationHistory) > 0 {
 		// For now, we'll let the backend create/manage sessions
-		// In the future, we could persist session_id locally
+		// In the future ersist session_id locally
 		request["session_id"] = nil
 	}
 
@@ -531,7 +550,11 @@ Respond with JSON in this exact format:
 
 Guidelines:
 - Set requires_action=true only if user clearly wants to upgrade/update a blockchain network
-- Detect network from keywords like "polkadot", "kusama", "dot", "ksm", etc.
+- Detect network from keywords:
+  * Ethereum: "ethereum", "eth", "geth", "lighthouse", "reth", "besu", "nimbus", "prysm", "teku"
+  * Polkadot: "polkadot", "dot", "parity"
+  * Kusama: "kusama", "ksm"
+  * Solana: "solana", "sol"
 - Set confidence based on clarity of the request
 - For greetings, questions, or general chat: requires_action=false`, userMessage)
 
@@ -565,10 +588,31 @@ func (agent *NodeOperatorAgent) parseUpgradeIntentResponse(response string) *Upg
 		intent.RequiresAction = true
 	}
 
-	if strings.Contains(responseLower, `"network": "polkadot"`) {
+	if strings.Contains(responseLower, `"network": "ethereum"`) {
+		intent.Network = "ethereum"
+	} else if strings.Contains(responseLower, `"network": "polkadot"`) {
 		intent.Network = "polkadot"
 	} else if strings.Contains(responseLower, `"network": "kusama"`) {
 		intent.Network = "kusama"
+	} else if strings.Contains(responseLower, `"network": "solana"`) {
+		intent.Network = "solana"
+	}
+
+	userMessage := strings.ToLower(response)
+	if strings.Contains(userMessage, "ethereum") || strings.Contains(userMessage, "geth") || 
+	   strings.Contains(userMessage, "lighthouse") || strings.Contains(userMessage, "reth") ||
+	   strings.Contains(userMessage, "besu") {
+		intent.Network = "ethereum"
+		intent.RequiresAction = true
+		intent.ActionType = "upgrade"
+	} else if strings.Contains(userMessage, "polkadot") || strings.Contains(userMessage, "dot") {
+		intent.Network = "polkadot"
+		intent.RequiresAction = true
+		intent.ActionType = "upgrade"
+	} else if strings.Contains(userMessage, "kusama") || strings.Contains(userMessage, "ksm") {
+		intent.Network = "kusama"
+		intent.RequiresAction = true
+		intent.ActionType = "upgrade"
 	}
 
 	if strings.Contains(responseLower, `"action_type": "upgrade"`) {
@@ -577,14 +621,249 @@ func (agent *NodeOperatorAgent) parseUpgradeIntentResponse(response string) *Upg
 		intent.ActionType = "update"
 	}
 
+	if intent.Network != "unknown" {
+		intent.Confidence = "high"
+	}
+
 	return intent
 }
 
-func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, network string) (*NetworkReleaseInfo, error) {
-	// Fetch all releases for the network to filter properly
-	apiURL := fmt.Sprintf("https://api.nodereleases.com/releases?network=%s&limit=20", network)
+func (agent *NodeOperatorAgent) AnalyzeUpgradeRequestWithContext(ctx context.Context, userMessage string, configFiles []string) (*EnhancedUpgradeRequest, error) {
+	intent, err := agent.ParseUpgradeIntent(ctx, userMessage)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse user intent: %w", err)
+	}
 
-	agent.logger.Info("Fetching latest release", "network", network, "url", apiURL)
+	infrastructure, err := agent.AnalyzeCurrentInfrastructure(ctx, configFiles)
+	if err != nil {
+		agent.logger.Warn("Failed to analyze infrastructure, using empty context", "error", err)
+		infrastructure = &InfrastructureContext{
+			DetectedClients: []DetectedClient{},
+			Confidence:     "low",
+		}
+	}
+
+	request := &EnhancedUpgradeRequest{
+		UserMessage:    userMessage,
+		Intent:        intent,
+		Infrastructure: infrastructure,
+	}
+
+	clarification := agent.determineIfClarificationNeeded(request)
+	if clarification != "" {
+		request.NeedsClarification = true
+		request.ClarificationPrompt = clarification
+		return request, nil
+	}
+
+	request.TargetClientType = agent.determineTargetClientType(request)
+	
+	return request, nil
+}
+
+
+
+func (agent *NodeOperatorAgent) extractImagesFromYAML(content string) []string {
+	yamlOps := NewYAMLOperations()
+	return yamlOps.ExtractImageReposFromYAML(content)
+}
+
+func (agent *NodeOperatorAgent) analyzeDockerImage(imageRef, filePath string) *DetectedClient {
+	parts := strings.Split(imageRef, ":")
+	if len(parts) != 2 {
+		return nil
+	}
+
+	repository := parts[0]
+	tag := parts[1]
+
+	clientMappings := map[string]struct {
+		ClientType     string
+		Repository     string
+		NetworkName    string
+	}{
+		"ethereum/client-go":    {ClientType: "execution", Repository: "ethereum/go-ethereum", NetworkName: "ethereum"},
+		"sigp/lighthouse":       {ClientType: "consensus", Repository: "sigp/lighthouse", NetworkName: "ethereum"},
+		"parity/polkadot":       {ClientType: "node", Repository: "paritytech/polkadot-sdk", NetworkName: "polkadot"},
+		"chainsafe/lodestar":    {ClientType: "consensus", Repository: "ChainSafe/lodestar", NetworkName: "ethereum"},
+		"statusim/nimbus-eth2":  {ClientType: "consensus", Repository: "status-im/nimbus-eth2", NetworkName: "ethereum"},
+		"hyperledger/besu":      {ClientType: "execution", Repository: "hyperledger/besu", NetworkName: "ethereum"},
+		"paradigmxyz/reth":      {ClientType: "execution", Repository: "paradigmxyz/reth", NetworkName: "ethereum"},
+	}
+
+	if clientInfo, exists := clientMappings[repository]; exists {
+		return &DetectedClient{
+			Repository:  clientInfo.Repository,
+			CurrentTag:  tag,
+			ClientType:  clientInfo.ClientType,
+			DockerImage: imageRef,
+			FilePath:    filePath,
+			NetworkName: clientInfo.NetworkName,
+		}
+	}
+
+	return nil
+}
+
+func (agent *NodeOperatorAgent) inferDeploymentType(clients []DetectedClient) string {
+	if len(clients) == 0 {
+		return "unknown"
+	}
+
+	clientTypes := make(map[string]bool)
+	for _, client := range clients {
+		clientTypes[client.ClientType] = true
+	}
+
+	if clientTypes["execution"] && clientTypes["consensus"] {
+		return "validator"  
+	} else if clientTypes["execution"] {
+		return "fullnode" 
+	} else if clientTypes["node"] {
+		return "node"    
+	}
+
+	return "unknown"
+}
+
+func (agent *NodeOperatorAgent) inferNetworkEnvironment(clients []DetectedClient) string {
+	for _, client := range clients {
+		lowerPath := strings.ToLower(client.FilePath)
+		lowerTag := strings.ToLower(client.CurrentTag)
+		
+		if strings.Contains(lowerPath, "testnet") || strings.Contains(lowerPath, "sepolia") || 
+		   strings.Contains(lowerPath, "holesky") || strings.Contains(lowerTag, "testnet") {
+			return "testnet"
+		}
+		if strings.Contains(lowerPath, "mainnet") || strings.Contains(lowerTag, "mainnet") {
+			return "mainnet"
+		}
+	}
+	return "unknown"
+}
+
+func (agent *NodeOperatorAgent) calculateConfidence(ctx *InfrastructureContext) string {
+	if len(ctx.DetectedClients) == 0 {
+		return "low"
+	}
+	if len(ctx.DetectedClients) >= 2 && ctx.DeploymentType != "unknown" {
+		return "high"
+	}
+	if len(ctx.DetectedClients) >= 1 {
+		return "medium"
+	}
+	return "low"
+}
+
+func (agent *NodeOperatorAgent) determineIfClarificationNeeded(request *EnhancedUpgradeRequest) string {
+	if request.Intent.Network == "unknown" && len(request.Infrastructure.DetectedClients) > 1 {
+		return agent.buildNetworkClarificationPrompt(request)
+	}
+
+	if request.Intent.Network != "unknown" && len(agent.getClientsForNetwork(request, request.Intent.Network)) > 1 {
+		return agent.buildClientTypeClarificationPrompt(request)
+	}
+
+	if request.Intent.RequiresAction && request.Intent.Network == "unknown" && len(request.Infrastructure.DetectedClients) == 0 {
+		return agent.buildGeneralClarificationPrompt(request)
+	}
+
+	return "" 
+}
+
+func (agent *NodeOperatorAgent) getClientsForNetwork(request *EnhancedUpgradeRequest, network string) []DetectedClient {
+	var clients []DetectedClient
+	for _, client := range request.Infrastructure.DetectedClients {
+		if strings.EqualFold(client.NetworkName, network) {
+			clients = append(clients, client)
+		}
+	}
+	return clients
+}
+
+func (agent *NodeOperatorAgent) buildNetworkClarificationPrompt(request *EnhancedUpgradeRequest) string {
+	networks := make(map[string][]DetectedClient)
+	for _, client := range request.Infrastructure.DetectedClients {
+		networks[client.NetworkName] = append(networks[client.NetworkName], client)
+	}
+
+	prompt := fmt.Sprintf("I found blockchain clients for multiple networks in your setup:\n\n")
+	for network, clients := range networks {
+		prompt += fmt.Sprintf("**%s:**\n", strings.Title(network))
+		for _, client := range clients {
+			prompt += fmt.Sprintf("- %s (%s client, version %s)\n", client.Repository, client.ClientType, client.CurrentTag)
+		}
+		prompt += "\n"
+	}
+
+	prompt += "Which network would you like to upgrade? Please specify the network name (e.g., 'ethereum', 'polkadot') or describe which specific client you want to update."
+
+	return prompt
+}
+
+func (agent *NodeOperatorAgent) buildClientTypeClarificationPrompt(request *EnhancedUpgradeRequest) string {
+	network := request.Intent.Network
+	clients := agent.getClientsForNetwork(request, network)
+
+	prompt := fmt.Sprintf("I found multiple %s clients in your setup:\n\n", strings.Title(network))
+	for _, client := range clients {
+		prompt += fmt.Sprintf("- **%s** (%s client, currently %s) in %s\n", 
+			client.Repository, client.ClientType, client.CurrentTag, client.FilePath)
+	}
+
+	prompt += fmt.Sprintf("\nWhich %s client would you like to upgrade? You can specify:\n", network)
+	prompt += "- The client type (e.g., 'execution client', 'consensus client')\n"
+	prompt += "- The specific client name (e.g., 'geth', 'lighthouse', 'reth')\n"
+	prompt += "- Or say 'all clients' to upgrade everything"
+
+	return prompt
+}
+
+func (agent *NodeOperatorAgent) buildGeneralClarificationPrompt(request *EnhancedUpgradeRequest) string {
+	return `I couldn't detect any blockchain clients in your configuration files or determine which network you want to upgrade.
+
+Please provide more specific information:
+- Which blockchain network? (e.g., 'ethereum', 'polkadot', 'solana')
+- Which client type? (e.g., 'execution client', 'consensus client', 'validator')
+- Any specific client preferences? (e.g., 'geth', 'lighthouse', 'reth')
+
+Example: "Upgrade my Ethereum execution client to the latest Geth version"`
+}
+
+func (agent *NodeOperatorAgent) determineTargetClientType(request *EnhancedUpgradeRequest) string {
+	if request.Intent.Network == "unknown" {
+		return ""
+	}
+
+	clients := agent.getClientsForNetwork(request, request.Intent.Network)
+	if len(clients) == 1 {
+		return clients[0].ClientType
+	}
+
+	preferences := agent.getPreferredClientTypes(request.Intent.Network)
+	for _, prefType := range preferences {
+		for _, client := range clients {
+			if strings.EqualFold(client.ClientType, prefType) {
+				return prefType
+			}
+		}
+	}
+
+	return "" 
+}
+
+func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, network string) (*NetworkReleaseInfo, error) {
+	return agent.GetLatestNetworkReleaseWithClientType(ctx, network, "")
+}
+
+func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx context.Context, network, clientType string) (*NetworkReleaseInfo, error) {
+	apiURL := fmt.Sprintf("https://api.nodereleases.com/releases?network=%s&limit=20", network)
+	if clientType != "" {
+		apiURL += fmt.Sprintf("&client_type=%s", clientType)
+		agent.logger.Info("Fetching latest release with client type filter", "network", network, "client_type", clientType, "url", apiURL)
+	} else {
+		agent.logger.Info("Fetching latest release without client type filter", "network", network, "url", apiURL)
+	}
 
 	resp, err := http.Get(apiURL)
 	if err != nil {
@@ -625,11 +904,10 @@ func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, net
 	}
 
 	if len(releaseResp.Releases) == 0 {
-		agent.logger.Warn("No releases found for network", "network", network)
-		return nil, fmt.Errorf("no releases found for network: %s", network)
+		agent.logger.Warn("No releases found for network", "network", network, "client_type", clientType)
+		return nil, fmt.Errorf("no releases found for network: %s with client_type: %s", network, clientType)
 	}
 
-	// Filter releases to get appropriate client type based on network
 	var selectedRelease *struct {
 		Repository string `json:"repository"`
 		Release    *struct {
@@ -648,33 +926,46 @@ func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, net
 		} `json:"metadata"`
 	}
 
-	// Define preferred client types for each network
-	preferredClientTypes := agent.getPreferredClientTypes(network)
-	agent.logger.Info("Looking for preferred client types", "network", network, "types", preferredClientTypes)
+	if clientType != "" {
+		selectedRelease = &releaseResp.Releases[0]
+		clientTypeValue := "unknown"
+		if selectedRelease.Metadata != nil {
+			clientTypeValue = selectedRelease.Metadata.ClientType
+		}
+		agent.logger.Info("Selected release using API client type filter", 
+			"repository", selectedRelease.Repository, 
+			"client_type", clientTypeValue,
+			"tag", selectedRelease.Release.TagName)
+	} else {
+		preferredClientTypes := agent.getPreferredClientTypes(network)
+		agent.logger.Info("Looking for preferred client types", "network", network, "types", preferredClientTypes)
 
-	// Try to find a release with preferred client type
-	for _, preferredType := range preferredClientTypes {
-		for _, release := range releaseResp.Releases {
-			if release.Metadata != nil && strings.EqualFold(release.Metadata.ClientType, preferredType) {
-				selectedRelease = &release
-				agent.logger.Info("Selected release with preferred client type", 
-					"repository", release.Repository, 
-					"client_type", release.Metadata.ClientType,
-					"tag", release.Release.TagName)
+		for _, preferredType := range preferredClientTypes {
+			for _, release := range releaseResp.Releases {
+				if release.Metadata != nil && strings.EqualFold(release.Metadata.ClientType, preferredType) {
+					selectedRelease = &release
+					agent.logger.Info("Selected release with preferred client type", 
+						"repository", release.Repository, 
+						"client_type", release.Metadata.ClientType,
+						"tag", release.Release.TagName)
+					break
+				}
+			}
+			if selectedRelease != nil {
 				break
 			}
 		}
-		if selectedRelease != nil {
-			break
-		}
-	}
 
-	// Fallback to first release if no preferred type found
-	if selectedRelease == nil {
-		selectedRelease = &releaseResp.Releases[0]
-		agent.logger.Warn("No preferred client type found, using first available", 
-			"repository", selectedRelease.Repository,
-			"client_type", selectedRelease.Metadata.ClientType if selectedRelease.Metadata != nil else "unknown")
+		if selectedRelease == nil {
+			selectedRelease = &releaseResp.Releases[0]
+			fallbackClientType := "unknown"
+			if selectedRelease.Metadata != nil {
+				fallbackClientType = selectedRelease.Metadata.ClientType
+			}
+			agent.logger.Warn("No preferred client type found, using first available", 
+				"repository", selectedRelease.Repository,
+				"client_type", fallbackClientType)
+		}
 	}
 
 	if selectedRelease.Release == nil {
@@ -708,21 +999,52 @@ func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, net
 	}, nil
 }
 
-// getPreferredClientTypes returns ordered list of preferred client types for each network
+func (agent *NodeOperatorAgent) getFileContentFromConfig(ctx context.Context, filePath string) (string, error) {
+	return "", fmt.Errorf("file content retrieval not implemented yet")
+}
+
+func (agent *NodeOperatorAgent) AnalyzeCurrentInfrastructure(ctx context.Context, configFiles []string) (*InfrastructureContext, error) {
+	infraCtx := &InfrastructureContext{
+		DetectedClients:    []DetectedClient{},
+		DeploymentType:     "unknown",
+		NetworkEnvironment: "unknown",
+		ConfiguredImages:   []string{},
+		Confidence:         "low",
+	}
+
+	for _, configFile := range configFiles {
+		content, err := agent.getFileContentFromConfig(ctx, configFile)
+		if err != nil {
+			agent.logger.Warn("Failed to read config file", "file", configFile, "error", err)
+			continue
+		}
+
+		images := agent.extractImagesFromYAML(content)
+		infraCtx.ConfiguredImages = append(infraCtx.ConfiguredImages, images...)
+
+		for _, imageRef := range images {
+			if client := agent.analyzeDockerImage(imageRef, configFile); client != nil {
+				infraCtx.DetectedClients = append(infraCtx.DetectedClients, *client)
+			}
+		}
+	}
+
+	infraCtx.DeploymentType = agent.inferDeploymentType(infraCtx.DetectedClients)
+	infraCtx.NetworkEnvironment = agent.inferNetworkEnvironment(infraCtx.DetectedClients)
+	infraCtx.Confidence = agent.calculateConfidence(infraCtx)
+
+	return infraCtx, nil
+}
+
 func (agent *NodeOperatorAgent) getPreferredClientTypes(network string) []string {
 	switch strings.ToLower(network) {
 	case "ethereum":
-		// For Ethereum, prefer execution clients as they're more commonly deployed in infrastructure
-		// Consensus clients (Lighthouse, Nimbus, etc.) are typically paired with execution clients
 		return []string{"execution", "node", "consensus"}
 	case "polkadot", "kusama":
-		// For Polkadot/Kusama, nodes are the primary client type
 		return []string{"node", "parachain"}
 	case "solana":
-		// For Solana, validators are the main client type
 		return []string{"validator", "node"}
 	default:
-		// Default preference order for unknown networks
 		return []string{"node", "execution", "validator", "consensus"}
 	}
 }
