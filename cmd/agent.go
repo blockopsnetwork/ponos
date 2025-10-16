@@ -658,13 +658,10 @@ func (agent *NodeOperatorAgent) AnalyzeUpgradeRequestWithContext(ctx context.Con
 		return nil, fmt.Errorf("failed to parse user intent: %w", err)
 	}
 
-	infrastructure, err := agent.AnalyzeCurrentInfrastructure(ctx, configFiles)
-	if err != nil {
-		agent.logger.Warn("Failed to analyze infrastructure, using empty context", "error", err)
-		infrastructure = &InfrastructureContext{
-			DetectedClients: []DetectedClient{},
-			Confidence:     "low",
-		}
+	// Infrastructure analysis now handled dynamically by LLM via analyze_current_deployment tool
+	infrastructure := &InfrastructureContext{
+		DetectedClients: []DetectedClient{},
+		Confidence:     "dynamic", // LLM determines this at runtime
 	}
 
 	request := &EnhancedUpgradeRequest{
@@ -692,42 +689,6 @@ func (agent *NodeOperatorAgent) extractImagesFromYAML(content string) []string {
 	return yamlOps.ExtractImageReposFromYAML(content)
 }
 
-func (agent *NodeOperatorAgent) analyzeDockerImage(imageRef, filePath string) *DetectedClient {
-	parts := strings.Split(imageRef, ":")
-	if len(parts) != 2 {
-		return nil
-	}
-
-	repository := parts[0]
-	tag := parts[1]
-
-	clientMappings := map[string]struct {
-		ClientType     string
-		Repository     string
-		NetworkName    string
-	}{
-		"ethereum/client-go":    {ClientType: "execution", Repository: "ethereum/go-ethereum", NetworkName: "ethereum"},
-		"sigp/lighthouse":       {ClientType: "consensus", Repository: "sigp/lighthouse", NetworkName: "ethereum"},
-		"parity/polkadot":       {ClientType: "node", Repository: "paritytech/polkadot-sdk", NetworkName: "polkadot"},
-		"chainsafe/lodestar":    {ClientType: "consensus", Repository: "ChainSafe/lodestar", NetworkName: "ethereum"},
-		"statusim/nimbus-eth2":  {ClientType: "consensus", Repository: "status-im/nimbus-eth2", NetworkName: "ethereum"},
-		"hyperledger/besu":      {ClientType: "execution", Repository: "hyperledger/besu", NetworkName: "ethereum"},
-		"paradigmxyz/reth":      {ClientType: "execution", Repository: "paradigmxyz/reth", NetworkName: "ethereum"},
-	}
-
-	if clientInfo, exists := clientMappings[repository]; exists {
-		return &DetectedClient{
-			Repository:  clientInfo.Repository,
-			CurrentTag:  tag,
-			ClientType:  clientInfo.ClientType,
-			DockerImage: imageRef,
-			FilePath:    filePath,
-			NetworkName: clientInfo.NetworkName,
-		}
-	}
-
-	return nil
-}
 
 func (agent *NodeOperatorAgent) inferDeploymentType(clients []DetectedClient) string {
 	if len(clients) == 0 {
@@ -1025,39 +986,6 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 
 func (agent *NodeOperatorAgent) getFileContentFromConfig(ctx context.Context, filePath string) (string, error) {
 	return "", fmt.Errorf("file content retrieval not implemented yet")
-}
-
-func (agent *NodeOperatorAgent) AnalyzeCurrentInfrastructure(ctx context.Context, configFiles []string) (*InfrastructureContext, error) {
-	infraCtx := &InfrastructureContext{
-		DetectedClients:    []DetectedClient{},
-		DeploymentType:     "unknown",
-		NetworkEnvironment: "unknown",
-		ConfiguredImages:   []string{},
-		Confidence:         "low",
-	}
-
-	for _, configFile := range configFiles {
-		content, err := agent.getFileContentFromConfig(ctx, configFile)
-		if err != nil {
-			agent.logger.Warn("Failed to read config file", "file", configFile, "error", err)
-			continue
-		}
-
-		images := agent.extractImagesFromYAML(content)
-		infraCtx.ConfiguredImages = append(infraCtx.ConfiguredImages, images...)
-
-		for _, imageRef := range images {
-			if client := agent.analyzeDockerImage(imageRef, configFile); client != nil {
-				infraCtx.DetectedClients = append(infraCtx.DetectedClients, *client)
-			}
-		}
-	}
-
-	infraCtx.DeploymentType = agent.inferDeploymentType(infraCtx.DetectedClients)
-	infraCtx.NetworkEnvironment = agent.inferNetworkEnvironment(infraCtx.DetectedClients)
-	infraCtx.Confidence = agent.calculateConfidence(infraCtx)
-
-	return infraCtx, nil
 }
 
 func (agent *NodeOperatorAgent) getPreferredClientTypes(network string) []string {

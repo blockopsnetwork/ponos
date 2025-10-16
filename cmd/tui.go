@@ -447,7 +447,6 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 			m.updateViewportContent()
 		case "tool_result":
-			// Show tool result in both status and chat history
 			var statusMsg, chatMsg string
 			if msg.update.Success {
 				statusMsg = fmt.Sprintf("%s completed successfully", msg.update.Tool)
@@ -457,7 +456,6 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				chatMsg = fmt.Sprintf("%s failed", msg.update.Tool)
 			}
 			
-			// Add summary as subtitle if available with tree connector
 			if msg.update.Summary != "" {
 				chatMsg += fmt.Sprintf("\n└ %s", msg.update.Summary)
 			}
