@@ -408,7 +408,6 @@ func (agent *NodeOperatorAgent) parseYAMLAnalysisResponse(response string) []str
 	return repos
 }
 
-// Removed ConversationResponse: unused legacy type
 
 type StreamingUpdate struct {
 	Type         string // "thinking", "tool_start", "tool_result", "assistant", "complete", "stream_append"
