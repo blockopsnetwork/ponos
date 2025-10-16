@@ -29,6 +29,7 @@ type AgentSummary struct {
 	ConfigChangesNeeded string   `json:"config_changes_needed"`
 	RiskAssessment      string   `json:"risk_assessment"`
 	DockerTag           string   `json:"docker_tag"`
+	PRTitle             string   `json:"pr_title"`
 	Success             bool     `json:"success"`
 	Error               string   `json:"error,omitempty"`
 }
@@ -261,13 +262,15 @@ func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Read
 		case "tool_result":
 			if tool, ok := streamEvent["tool"].(string); ok {
 				success, _ := streamEvent["success"].(bool)
+				summary, _ := streamEvent["summary"].(string)
 
-				agent.logger.Info("Stream tool result", "tool", tool, "success", success)
+				agent.logger.Info("Stream tool result", "tool", tool, "success", success, "summary", summary)
 				updates <- StreamingUpdate{
 					Type:    "tool_result",
 					Message: fmt.Sprintf("%s completed", tool),
 					Tool:    tool,
 					Success: success,
+					Summary: summary,
 				}
 			}
 
@@ -421,6 +424,7 @@ type StreamingUpdate struct {
 	Message      string
 	Tool         string
 	Success      bool
+	Summary      string // Detailed results or error information from tool execution
 	SessionID    string 
 	CheckpointID string 
 	MessageID    string 
@@ -490,7 +494,7 @@ func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreaming(ctx co
 }
 
 func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreamingAndHistory(ctx context.Context, userMessage string, conversationHistory []map[string]string, updates chan<- StreamingUpdate) error {
-	agent.logger.Info("Using intelligent agent-core for real-time streaming with conversation history", "message", userMessage, "history_length", len(conversationHistory))
+	agent.logger.Info("Using agent-core for real-time streaming with conversation history", "message", userMessage, "history_length", len(conversationHistory))
 
 	request := map[string]interface{}{
 		"message":              userMessage,
