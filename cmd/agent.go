@@ -214,6 +214,7 @@ func (agent *NodeOperatorAgent) callAgentCore(ctx context.Context, prompt string
 
 func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Reader, updates chan<- StreamingUpdate) error {
 	scanner := bufio.NewScanner(body)
+	var assistantMessageID string
 
 	agent.logger.Info("Processing streaming response with real-time updates")
 
@@ -272,9 +273,20 @@ func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Read
 
 		case "assistant":
 			agent.logger.Info("Stream assistant response", "message", message)
-			updates <- StreamingUpdate{
-				Type:    "assistant",
-				Message: message,
+			if assistantMessageID == "" {
+				assistantMessageID = fmt.Sprintf("msg_%d", time.Now().UnixNano())
+				updates <- StreamingUpdate{
+					Type:        "assistant",
+					Message:     message,
+					MessageID:   assistantMessageID,
+					IsAppending: false,
+				}
+			} else {
+				updates <- StreamingUpdate{
+					Type:      "stream_append",
+					Message:   message,
+					MessageID: assistantMessageID,
+				}
 			}
 
 		case "status":
@@ -405,12 +417,14 @@ type ConversationResponse struct {
 }
 
 type StreamingUpdate struct {
-	Type         string // "thinking", "tool_start", "tool_result", "assistant", "complete"
+	Type         string // "thinking", "tool_start", "tool_result", "assistant", "complete", "stream_append"
 	Message      string
 	Tool         string
 	Success      bool
-	SessionID    string // For checkpoint management
-	CheckpointID string // For checkpoint management
+	SessionID    string 
+	CheckpointID string 
+	MessageID    string 
+	IsAppending  bool  
 }
 
 
@@ -495,8 +509,6 @@ func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreamingAndHist
 	}
 
 	if len(conversationHistory) > 0 {
-		// For now, we'll let the backend create/manage sessions
-		// In the future ersist session_id locally
 		request["session_id"] = nil
 	}
 
@@ -535,7 +547,7 @@ func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreamingAndHist
 
 
 func (agent *NodeOperatorAgent) ParseUpgradeIntent(ctx context.Context, userMessage string) (*UpgradeIntent, error) {
-	prompt := fmt.Sprintf(`Analyze this user message for blockchain network upgrade intentions.
+	prompt := fmt.Sprintf(`Analyze this user message to determine what action they want.
 
 User Message: "%s"
 
@@ -543,20 +555,28 @@ Respond with JSON in this exact format:
 {
   "requires_action": true/false,
   "network": "polkadot|kusama|ethereum|solana|other|unknown",
-  "action_type": "upgrade|update|deploy|status|none",
+  "action_type": "check|status|info|upgrade|update|deploy|none",
   "confidence": "high|medium|low",
   "explanation": "brief explanation of what the user wants"
 }
 
 Guidelines:
-- Set requires_action=true only if user clearly wants to upgrade/update a blockchain network
-- Detect network from keywords:
-  * Ethereum: "ethereum", "eth", "geth", "lighthouse", "reth", "besu", "nimbus", "prysm", "teku"
+- ONLY set requires_action=true if user wants to ACTUALLY CHANGE something (upgrade/update/deploy)
+- If user asks to "check", "show", "get", "what is", "tell me" -> action_type="check" or "status", requires_action=false
+- If user wants to "upgrade", "update", "deploy", "install" -> requires_action=true
+- Action types:
+  * "check" - asking for information/version/status (NO ACTION)
+  * "status" - checking current state (NO ACTION) 
+  * "info" - requesting information (NO ACTION)
+  * "upgrade" - actually upgrade version (ACTION REQUIRED)
+  * "update" - actually update configuration (ACTION REQUIRED)
+  * "deploy" - actually deploy something (ACTION REQUIRED)
+- Network detection:
+  * Ethereum: "ethereum", "eth", "geth", "lighthouse", "reth", "besu"
   * Polkadot: "polkadot", "dot", "parity"
   * Kusama: "kusama", "ksm"
   * Solana: "solana", "sol"
-- Set confidence based on clarity of the request
-- For greetings, questions, or general chat: requires_action=false`, userMessage)
+- IMPORTANT: "check latest version" means action_type="check", requires_action=false`, userMessage)
 
 	response, err := agent.callAgentCore(ctx, prompt)
 	if err != nil {

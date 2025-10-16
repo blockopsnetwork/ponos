@@ -16,15 +16,16 @@ import (
 )
 
 var (
-	brandColor   = lipgloss.Color("#8B5CF6") // purple
+	brandColor   = lipgloss.Color("#FFFFFF") // white 
 	textColor    = lipgloss.Color("#E5E7EB") // light gray
 	subtleColor  = lipgloss.Color("#9CA3AF") // muted text
 	successColor = lipgloss.Color("#10B981") // green for success
 	errorColor   = lipgloss.Color("#EF4444") // red for errors
-	accentColor  = lipgloss.Color("#F59E0B") // yello for highlights
+	accentColor  = lipgloss.Color("#F59E0B") // yellow for highlights
+	purpleColor  = lipgloss.Color("#8B5CF6") // purple 
 
 	logoStyle = lipgloss.NewStyle().
-			Foreground(brandColor).
+			Foreground(purpleColor).
 			Bold(true)
 
 	titleStyle = lipgloss.NewStyle().
@@ -86,8 +87,8 @@ type tuiModel struct {
 	viewport            viewport.Model
 	textarea            textarea.Model
 	messages            []ChatMessage
-	conversationHistory []map[string]string // Track conversation for LLM context
-	sessionID           string              // Current session checkpoint ID
+	conversationHistory []map[string]string 
+	sessionID           string              
 	ready               bool
 	width               int
 	height              int
@@ -98,14 +99,19 @@ type tuiModel struct {
 	program             *tea.Program
 	cancelThinking      context.CancelFunc
 	showHelp            bool
-	animationFrame      int                 // Current animation frame
+	animationFrame      int                 
+	
+	isStreaming         bool
+	streamingMessageID  string              
+	streamingToolID     string              
 }
 
 type ChatMessage struct {
-	Role      string // "user", "assistant", "system", "error"
+	ID        string   
+	Role      string  
 	Content   string
 	Timestamp time.Time
-	Actions   []string // Actions performed
+	Actions   []string
 }
 
 type msgResponse struct {
@@ -122,6 +128,10 @@ type streamingUpdate struct {
 }
 
 type animationTick struct {}
+
+type animationUpdate struct {
+	frame int
+}
 
 func NewPonosAgentTUI(bot *Bot, logger *slog.Logger) *PonosAgentTUI {
 	return &PonosAgentTUI{
@@ -150,7 +160,7 @@ func (tui *PonosAgentTUI) initModel() tuiModel {
 	}
 
 	ta := textarea.New()
-	ta.Placeholder = "Deploy Polkadot parachain on paseo testnet"
+	ta.Placeholder = "..."
 	ta.Focus()
 	ta.Prompt = ""
 	ta.CharLimit = 2000
@@ -213,8 +223,8 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		if !m.ready {
-			logoHeight := 10 // ASCII logo height
-			titleHeight := 4 // Title section height
+			logoHeight := 10 
+			titleHeight := 4 
 			loadingHeight := 1
 			helpHeight := 1
 			inputHeight := 4
@@ -306,6 +316,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				m.messages = append(m.messages, ChatMessage{
+					ID:        generateMessageID(),
 					Role:      "user",
 					Content:   userInput,
 					Timestamp: time.Now(),
@@ -318,23 +329,33 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				m.textarea.Reset()
 				m.loading = true
-				m.loadingMsg = "Processing your request..."
+				m.loadingMsg = "Ponos thinking..."
 				m.animationFrame = 0
 				m.updateViewportContent()
 
 				ctx, cancel := context.WithCancel(context.Background())
 				m.cancelThinking = cancel
 
-				cmds = append(cmds, m.tickAnimation())
-
 				program := m.program
+				go func() {
+					animFrame := 0
+					for {
+						if !m.loading {
+							break
+						}
+						time.Sleep(150 * time.Millisecond)
+						if program != nil && m.loading {
+							program.Send(animationUpdate{frame: animFrame})
+							animFrame++
+						}
+					}
+				}()
+
 				go func() {
 					m.tui.logger.Info("Starting streaming processing", "input", userInput)
 
-					// Create a channel for streaming updates
 					updates := make(chan StreamingUpdate, 10)
 
-					// Process streaming conversation in a separate goroutine
 					go func() {
 						defer close(updates)
 						err := m.tui.handleUserInputWithStreaming(ctx, userInput, m.conversationHistory, updates)
@@ -388,12 +409,14 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if msg.err != nil {
 			m.messages = append(m.messages, ChatMessage{
+				ID:        generateMessageID(),
 				Role:      "error",
 				Content:   msg.err.Error(),
 				Timestamp: time.Now(),
 			})
 		} else if msg.content != "" {
 			m.messages = append(m.messages, ChatMessage{
+				ID:        generateMessageID(),
 				Role:      "assistant",
 				Content:   msg.content,
 				Timestamp: time.Now(),
@@ -412,20 +435,11 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamingUpdate:
 		switch msg.update.Type {
 		case "thinking":
-			m.messages = append(m.messages, ChatMessage{
-				Role:      "activity",
-				Content:   msg.update.Message,
-				Timestamp: time.Now(),
-			})
-			m.updateViewportContent()
+			m.loadingMsg = msg.update.Message
 		case "tool_start":
 			toolMsg := fmt.Sprintf("🔧 Executing %s...", msg.update.Tool)
-			m.messages = append(m.messages, ChatMessage{
-				Role:      "activity",
-				Content:   toolMsg,
-				Timestamp: time.Now(),
-			})
-			m.updateViewportContent()
+			toolID := m.startStreamingMessage("activity", toolMsg)
+			m.streamingToolID = toolID
 		case "tool_result":
 			var resultMsg string
 			if msg.update.Success {
@@ -433,16 +447,44 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				resultMsg = fmt.Sprintf("%s failed", msg.update.Tool)
 			}
-			m.messages = append(m.messages, ChatMessage{
-				Role:      "activity",
-				Content:   resultMsg,
-				Timestamp: time.Now(),
-			})
-			m.updateViewportContent()
+			if m.streamingToolID != "" {
+				if toolMsg := m.findMessageByID(m.streamingToolID); toolMsg != nil {
+					toolMsg.Content = resultMsg
+					m.updateViewportContent()
+				}
+			} else {
+				m.messages = append(m.messages, ChatMessage{
+					ID:        generateMessageID(),
+					Role:      "activity",
+					Content:   resultMsg,
+					Timestamp: time.Now(),
+				})
+				m.updateViewportContent()
+			}
+		case "stream_append":
+			if msg.update.MessageID != "" {
+				m.handleStreamAppend(msg.update.MessageID, msg.update.Message)
+			}
 		case "assistant":
+			if msg.update.MessageID != "" && msg.update.IsAppending {
+				if m.findMessageByID(msg.update.MessageID) == nil {
+					m.startStreamingMessage("assistant", msg.update.Message)
+				} else {
+					m.handleStreamAppend(msg.update.MessageID, msg.update.Message)
+				}
+			} else {
+				m.messages = append(m.messages, ChatMessage{
+					ID:        generateMessageID(),
+					Role:      "assistant",
+					Content:   msg.update.Message,
+					Timestamp: time.Now(),
+				})
+				m.updateViewportContent()
+			}
 		case "complete":
 			m.loading = false
 			m.loadingMsg = ""
+			m.completeStreamingMessage()
 
 			if msg.update.SessionID != "" {
 				m.sessionID = msg.update.SessionID
@@ -453,6 +495,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		default:
 			m.messages = append(m.messages, ChatMessage{
+				ID:        generateMessageID(),
 				Role:      "activity",
 				Content:   msg.update.Message,
 				Timestamp: time.Now(),
@@ -460,10 +503,9 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateViewportContent()
 		}
 
-	case animationTick:
+	case animationUpdate:
 		if m.loading {
-			m.animationFrame++
-			cmds = append(cmds, m.tickAnimation())
+			m.animationFrame = msg.frame
 		}
 
 	}
@@ -513,7 +555,7 @@ func (m *tuiModel) View() string {
 	if m.loading {
 		loadingText := m.loadingMsg
 		if loadingText == "" {
-			loadingText = "Processing your request..."
+			loadingText = "Ponos thinking..."
 		}
 		indicator := m.getAnimatedIndicator()
 		loadingLine := fmt.Sprintf("%s %s - Esc to cancel", indicator, loadingText)
@@ -535,14 +577,9 @@ func (m *tuiModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
-func (m *tuiModel) tickAnimation() tea.Cmd {
-	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
-		return animationTick{}
-	})
-}
 
 func (m *tuiModel) getAnimatedIndicator() string {
-	frames := []string{"▀▀", "▐▌", "▄▄", "▐▌"}
+	frames := []string{"|", "/", "-", "\\"}
 	return frames[m.animationFrame%len(frames)]
 }
 
@@ -652,14 +689,6 @@ func (tui *PonosAgentTUI) handleUserInputWithStreaming(ctx context.Context, inpu
 		return nil
 	}
 
-	if tui.bot.agent != nil {
-		intent, err := tui.bot.agent.ParseUpgradeIntent(ctx, input)
-		if err == nil && intent != nil && intent.RequiresAction && (intent.ActionType == "upgrade" || intent.ActionType == "update") {
-			tui.logger.Info("Detected upgrade intent", "network", intent.Network, "action", intent.ActionType)
-			return tui.handleUpgradeRequest(ctx, intent, updates)
-		}
-	}
-
 	if tui.bot.agent == nil {
 		tui.logger.Error("Agent-core not available")
 		updates <- StreamingUpdate{Type: "assistant", Message: "Sorry, the agent-core backend is not available. Please ensure agent-core is running and accessible."}
@@ -667,6 +696,7 @@ func (tui *PonosAgentTUI) handleUserInputWithStreaming(ctx context.Context, inpu
 		return nil
 	}
 
+	tui.logger.Info("Sending user prompt directly to agent-core", "input", input)
 	return tui.bot.agent.ProcessConversationWithStreamingAndHistory(ctx, input, conversationHistory, updates)
 }
 
