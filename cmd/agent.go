@@ -29,15 +29,11 @@ type AgentSummary struct {
 	ConfigChangesNeeded string   `json:"config_changes_needed"`
 	RiskAssessment      string   `json:"risk_assessment"`
 	DockerTag           string   `json:"docker_tag"`
+	PRTitle             string   `json:"pr_title"`
 	Success             bool     `json:"success"`
 	Error               string   `json:"error,omitempty"`
 }
 
-type YAMLAnalysisResult struct {
-	BlockchainContainers []string `json:"blockchain_containers"`
-	Reasoning            string   `json:"reasoning"`
-	NetworkTypes         []string `json:"network_types"`
-}
 
 type NetworkReleaseInfo struct {
 	Network    string      `json:"network"`
@@ -261,13 +257,15 @@ func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Read
 		case "tool_result":
 			if tool, ok := streamEvent["tool"].(string); ok {
 				success, _ := streamEvent["success"].(bool)
+				summary, _ := streamEvent["summary"].(string)
 
-				agent.logger.Info("Stream tool result", "tool", tool, "success", success)
+				agent.logger.Info("Stream tool result", "tool", tool, "success", success, "summary", summary)
 				updates <- StreamingUpdate{
 					Type:    "tool_result",
 					Message: fmt.Sprintf("%s completed", tool),
 					Tool:    tool,
 					Success: success,
+					Summary: summary,
 				}
 			}
 
@@ -410,17 +408,13 @@ func (agent *NodeOperatorAgent) parseYAMLAnalysisResponse(response string) []str
 	return repos
 }
 
-type ConversationResponse struct {
-	Content  string
-	Finished bool
-	Error    error
-}
 
 type StreamingUpdate struct {
 	Type         string // "thinking", "tool_start", "tool_result", "assistant", "complete", "stream_append"
 	Message      string
 	Tool         string
 	Success      bool
+	Summary      string // Detailed results or error information from tool execution
 	SessionID    string 
 	CheckpointID string 
 	MessageID    string 
@@ -490,7 +484,7 @@ func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreaming(ctx co
 }
 
 func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreamingAndHistory(ctx context.Context, userMessage string, conversationHistory []map[string]string, updates chan<- StreamingUpdate) error {
-	agent.logger.Info("Using intelligent agent-core for real-time streaming with conversation history", "message", userMessage, "history_length", len(conversationHistory))
+	agent.logger.Info("Using agent-core for real-time streaming with conversation history", "message", userMessage, "history_length", len(conversationHistory))
 
 	request := map[string]interface{}{
 		"message":              userMessage,
@@ -654,13 +648,9 @@ func (agent *NodeOperatorAgent) AnalyzeUpgradeRequestWithContext(ctx context.Con
 		return nil, fmt.Errorf("failed to parse user intent: %w", err)
 	}
 
-	infrastructure, err := agent.AnalyzeCurrentInfrastructure(ctx, configFiles)
-	if err != nil {
-		agent.logger.Warn("Failed to analyze infrastructure, using empty context", "error", err)
-		infrastructure = &InfrastructureContext{
-			DetectedClients: []DetectedClient{},
-			Confidence:     "low",
-		}
+	infrastructure := &InfrastructureContext{
+		DetectedClients: []DetectedClient{},
+		Confidence:     "dynamic", 
 	}
 
 	request := &EnhancedUpgradeRequest{
@@ -681,99 +671,6 @@ func (agent *NodeOperatorAgent) AnalyzeUpgradeRequestWithContext(ctx context.Con
 	return request, nil
 }
 
-
-
-func (agent *NodeOperatorAgent) extractImagesFromYAML(content string) []string {
-	yamlOps := NewYAMLOperations()
-	return yamlOps.ExtractImageReposFromYAML(content)
-}
-
-func (agent *NodeOperatorAgent) analyzeDockerImage(imageRef, filePath string) *DetectedClient {
-	parts := strings.Split(imageRef, ":")
-	if len(parts) != 2 {
-		return nil
-	}
-
-	repository := parts[0]
-	tag := parts[1]
-
-	clientMappings := map[string]struct {
-		ClientType     string
-		Repository     string
-		NetworkName    string
-	}{
-		"ethereum/client-go":    {ClientType: "execution", Repository: "ethereum/go-ethereum", NetworkName: "ethereum"},
-		"sigp/lighthouse":       {ClientType: "consensus", Repository: "sigp/lighthouse", NetworkName: "ethereum"},
-		"parity/polkadot":       {ClientType: "node", Repository: "paritytech/polkadot-sdk", NetworkName: "polkadot"},
-		"chainsafe/lodestar":    {ClientType: "consensus", Repository: "ChainSafe/lodestar", NetworkName: "ethereum"},
-		"statusim/nimbus-eth2":  {ClientType: "consensus", Repository: "status-im/nimbus-eth2", NetworkName: "ethereum"},
-		"hyperledger/besu":      {ClientType: "execution", Repository: "hyperledger/besu", NetworkName: "ethereum"},
-		"paradigmxyz/reth":      {ClientType: "execution", Repository: "paradigmxyz/reth", NetworkName: "ethereum"},
-	}
-
-	if clientInfo, exists := clientMappings[repository]; exists {
-		return &DetectedClient{
-			Repository:  clientInfo.Repository,
-			CurrentTag:  tag,
-			ClientType:  clientInfo.ClientType,
-			DockerImage: imageRef,
-			FilePath:    filePath,
-			NetworkName: clientInfo.NetworkName,
-		}
-	}
-
-	return nil
-}
-
-func (agent *NodeOperatorAgent) inferDeploymentType(clients []DetectedClient) string {
-	if len(clients) == 0 {
-		return "unknown"
-	}
-
-	clientTypes := make(map[string]bool)
-	for _, client := range clients {
-		clientTypes[client.ClientType] = true
-	}
-
-	if clientTypes["execution"] && clientTypes["consensus"] {
-		return "validator"  
-	} else if clientTypes["execution"] {
-		return "fullnode" 
-	} else if clientTypes["node"] {
-		return "node"    
-	}
-
-	return "unknown"
-}
-
-func (agent *NodeOperatorAgent) inferNetworkEnvironment(clients []DetectedClient) string {
-	for _, client := range clients {
-		lowerPath := strings.ToLower(client.FilePath)
-		lowerTag := strings.ToLower(client.CurrentTag)
-		
-		if strings.Contains(lowerPath, "testnet") || strings.Contains(lowerPath, "sepolia") || 
-		   strings.Contains(lowerPath, "holesky") || strings.Contains(lowerTag, "testnet") {
-			return "testnet"
-		}
-		if strings.Contains(lowerPath, "mainnet") || strings.Contains(lowerTag, "mainnet") {
-			return "mainnet"
-		}
-	}
-	return "unknown"
-}
-
-func (agent *NodeOperatorAgent) calculateConfidence(ctx *InfrastructureContext) string {
-	if len(ctx.DetectedClients) == 0 {
-		return "low"
-	}
-	if len(ctx.DetectedClients) >= 2 && ctx.DeploymentType != "unknown" {
-		return "high"
-	}
-	if len(ctx.DetectedClients) >= 1 {
-		return "medium"
-	}
-	return "low"
-}
 
 func (agent *NodeOperatorAgent) determineIfClarificationNeeded(request *EnhancedUpgradeRequest) string {
 	if request.Intent.Network == "unknown" && len(request.Infrastructure.DetectedClients) > 1 {
@@ -1017,43 +914,6 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 			Draft:       selectedRelease.Release.Draft,
 		},
 	}, nil
-}
-
-func (agent *NodeOperatorAgent) getFileContentFromConfig(ctx context.Context, filePath string) (string, error) {
-	return "", fmt.Errorf("file content retrieval not implemented yet")
-}
-
-func (agent *NodeOperatorAgent) AnalyzeCurrentInfrastructure(ctx context.Context, configFiles []string) (*InfrastructureContext, error) {
-	infraCtx := &InfrastructureContext{
-		DetectedClients:    []DetectedClient{},
-		DeploymentType:     "unknown",
-		NetworkEnvironment: "unknown",
-		ConfiguredImages:   []string{},
-		Confidence:         "low",
-	}
-
-	for _, configFile := range configFiles {
-		content, err := agent.getFileContentFromConfig(ctx, configFile)
-		if err != nil {
-			agent.logger.Warn("Failed to read config file", "file", configFile, "error", err)
-			continue
-		}
-
-		images := agent.extractImagesFromYAML(content)
-		infraCtx.ConfiguredImages = append(infraCtx.ConfiguredImages, images...)
-
-		for _, imageRef := range images {
-			if client := agent.analyzeDockerImage(imageRef, configFile); client != nil {
-				infraCtx.DetectedClients = append(infraCtx.DetectedClients, *client)
-			}
-		}
-	}
-
-	infraCtx.DeploymentType = agent.inferDeploymentType(infraCtx.DetectedClients)
-	infraCtx.NetworkEnvironment = agent.inferNetworkEnvironment(infraCtx.DetectedClients)
-	infraCtx.Confidence = agent.calculateConfidence(infraCtx)
-
-	return infraCtx, nil
 }
 
 func (agent *NodeOperatorAgent) getPreferredClientTypes(network string) []string {

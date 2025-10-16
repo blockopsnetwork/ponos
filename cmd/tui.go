@@ -437,30 +437,36 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "thinking":
 			m.loadingMsg = msg.update.Message
 		case "tool_start":
-			toolMsg := fmt.Sprintf("🔧 Executing %s...", msg.update.Tool)
-			toolID := m.startStreamingMessage("activity", toolMsg)
-			m.streamingToolID = toolID
+			m.loadingMsg = fmt.Sprintf("Executing %s...", msg.update.Tool)
+			m.messages = append(m.messages, ChatMessage{
+				ID:        generateMessageID(),
+				Role:      "activity",
+				Content:   fmt.Sprintf("Executing %s", msg.update.Tool),
+				Timestamp: time.Now(),
+			})
+			m.updateViewportContent()
 		case "tool_result":
-			var resultMsg string
+			var statusMsg, chatMsg string
 			if msg.update.Success {
-				resultMsg = fmt.Sprintf("%s completed successfully", msg.update.Tool)
+				statusMsg = fmt.Sprintf("%s completed successfully", msg.update.Tool)
+				chatMsg = fmt.Sprintf("%s completed successfully", msg.update.Tool)
 			} else {
-				resultMsg = fmt.Sprintf("%s failed", msg.update.Tool)
+				statusMsg = fmt.Sprintf("%s failed", msg.update.Tool)
+				chatMsg = fmt.Sprintf("%s failed", msg.update.Tool)
 			}
-			if m.streamingToolID != "" {
-				if toolMsg := m.findMessageByID(m.streamingToolID); toolMsg != nil {
-					toolMsg.Content = resultMsg
-					m.updateViewportContent()
-				}
-			} else {
-				m.messages = append(m.messages, ChatMessage{
-					ID:        generateMessageID(),
-					Role:      "activity",
-					Content:   resultMsg,
-					Timestamp: time.Now(),
-				})
-				m.updateViewportContent()
+			
+			if msg.update.Summary != "" {
+				chatMsg += fmt.Sprintf("\n└ %s", msg.update.Summary)
 			}
+			
+			m.loadingMsg = statusMsg
+			m.messages = append(m.messages, ChatMessage{
+				ID:        generateMessageID(),
+				Role:      "activity",
+				Content:   chatMsg,
+				Timestamp: time.Now(),
+			})
+			m.updateViewportContent()
 		case "stream_append":
 			if msg.update.MessageID != "" {
 				m.handleStreamAppend(msg.update.MessageID, msg.update.Message)

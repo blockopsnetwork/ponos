@@ -115,6 +115,7 @@ func runServer() {
 	http.HandleFunc("/slack/events", bot.handleSlackEvents)
 	http.HandleFunc("/slack/command", bot.handleSlashCommand)
 	http.HandleFunc("/webhooks/releases", webhookHandler.handleReleasesWebhook)
+	http.HandleFunc("/mcp/github", bot.handleGitHubMCP)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
@@ -149,7 +150,6 @@ func runAgentTUI() {
 	var logger *slog.Logger
 	logFile, err := os.OpenFile("/tmp/ponos-tui.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
-		// If we can't create log file, use a discard logger
 		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 	} else {
 		logger = slog.New(slog.NewJSONHandler(logFile, nil))
@@ -158,12 +158,21 @@ func runAgentTUI() {
 
 	cfg, err := config.Load()
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Please check your environment variables.\n")
 		logger.Error("failed to load configuration", "error", err)
 		os.Exit(1)
 	}
 	
-	// Validate GitHub bot configuration
 	if err := cfg.ValidateGitHubBotConfig(); err != nil {
+		fmt.Fprintf(os.Stderr, "GitHub configuration error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "\nRequired environment variables:\n")
+		fmt.Fprintf(os.Stderr, "  • Either set GITHUB_TOKEN for personal access token authentication\n")
+		fmt.Fprintf(os.Stderr, "  • Or set all three for GitHub App authentication:\n")
+		fmt.Fprintf(os.Stderr, "    - GITHUB_APP_ID\n")
+		fmt.Fprintf(os.Stderr, "    - GITHUB_INSTALL_ID\n")
+		fmt.Fprintf(os.Stderr, "    - GITHUB_PEM_KEY\n")
+		fmt.Fprintf(os.Stderr, "\nSee config/config.go for setup instructions.\n")
 		logger.Error("GitHub bot configuration error", "error", err)
 		logger.Info("See config/config.go for setup instructions")
 		os.Exit(1)
@@ -183,7 +192,9 @@ func runAgentTUI() {
 
 	agent, err := NewNodeOperatorAgent(logger)
 	if err != nil {
-		logger.Error("failed to create AI agent", "error", err)
+		fmt.Fprintf(os.Stderr, "Failed to instantiate agent: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Please check your agent-core service configuration (OpenAI API key, etc.)\n")
+		logger.Error("failed to instantiate agent", "error", err)
 		os.Exit(1)
 	}
 
@@ -196,7 +207,6 @@ func runAgentTUI() {
 	}
 	bot.githubHandler = NewGitHubDeployHandler(bot)
 
-	// Start TUI agent interface
 	tui := NewPonosAgentTUI(bot, logger)
 	tui.Start()
 }
@@ -368,6 +378,109 @@ func (b *Bot) handleSlashCommand(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 
+}
+
+func (b *Bot) handleGitHubMCP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	var mcpRequest MCPRequest
+	if err := json.NewDecoder(r.Body).Decode(&mcpRequest); err != nil {
+		b.logger.Error("failed to decode MCP request", "error", err)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(MCPResponse{
+			JSONRPC: "2.0",
+			ID:      mcpRequest.ID,
+			Error: &MCPError{
+				Code:    -32700,
+				Message: "Parse error",
+			},
+		})
+		return
+	}
+
+	switch mcpRequest.Method {
+	case "tools/call":
+		b.handleMCPToolCall(w, mcpRequest)
+	default:
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(MCPResponse{
+			JSONRPC: "2.0",
+			ID:      mcpRequest.ID,
+			Error: &MCPError{
+				Code:    -32601,
+				Message: "Method not found",
+			},
+		})
+	}
+}
+
+func (b *Bot) handleMCPToolCall(w http.ResponseWriter, mcpRequest MCPRequest) {
+	params, ok := mcpRequest.Params.(map[string]interface{})
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(MCPResponse{
+			JSONRPC: "2.0",
+			ID:      mcpRequest.ID,
+			Error: &MCPError{
+				Code:    -32602,
+				Message: "Invalid params",
+			},
+		})
+		return
+	}
+
+	toolName, ok := params["name"].(string)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(MCPResponse{
+			JSONRPC: "2.0",
+			ID:      mcpRequest.ID,
+			Error: &MCPError{
+				Code:    -32602,
+				Message: "Tool name required",
+			},
+		})
+		return
+	}
+
+	arguments, ok := params["arguments"].(map[string]interface{})
+	if !ok {
+		arguments = make(map[string]interface{})
+	}
+
+	result, err := b.mcpClient.CallTool(context.Background(), toolName, arguments)
+	if err != nil {
+		b.logger.Error("MCP tool call failed", "tool", toolName, "error", err)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(MCPResponse{
+			JSONRPC: "2.0",
+			ID:      mcpRequest.ID,
+			Error: &MCPError{
+				Code:    -32000,
+				Message: fmt.Sprintf("Tool execution failed: %v", err),
+			},
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(MCPResponse{
+		JSONRPC: "2.0",
+		ID:      mcpRequest.ID,
+		Result:  result,
+	})
 }
 
 func (b *Bot) sendReleaseSummaryFromAgent(channel string, payload ReleasesWebhookPayload, summary *AgentSummary, prURL ...string) {

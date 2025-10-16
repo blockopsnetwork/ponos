@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/slack-go/slack"
@@ -73,12 +74,31 @@ func BuildReleaseNotificationBlocks(payload ReleasesWebhookPayload, summary *Age
 	}
 }
 
+func extractVersionTag(aiResponse string) string {
+	re := regexp.MustCompile(`"(v?\d+\.\d+\.\d+[^"]*)"`)
+	if matches := re.FindStringSubmatch(aiResponse); len(matches) > 1 {
+		return matches[1]
+	}
+	
+	re = regexp.MustCompile(`\b(v?\d+\.\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9\-\.]+)?)\b`)
+	if matches := re.FindStringSubmatch(aiResponse); len(matches) > 1 {
+		return matches[1]
+	}
+	
+	return aiResponse
+}
+
 func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSummary) (title, body, commitMessage string) {
 	if botName == "" {
 		botName = "Ponos"
 	}
 
-	title = fmt.Sprintf("%s: Update %s to %s", botName, networkName, releaseTag)
+	cleanReleaseTag := extractVersionTag(releaseTag)
+	if summary.PRTitle != "" {
+		title = summary.PRTitle
+	} else {
+		title = fmt.Sprintf("%s: Update %s to %s", botName, networkName, cleanReleaseTag)
+	}
 
 	body = fmt.Sprintf(`## 🤖 Automated Update by %s
 
@@ -96,7 +116,7 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 ---
 **About this PR:**
 - 🤖 **Created by:** %s Bot
-- 🔍 **AI Analysis:** Comprehensive release analysis performed
+- 🔍 **Node Operator Agent Analysis:** Comprehensive release analysis performed
 - ⚡ **Action Required:** Review and decide whether to merge or close
 
 *This PR was automatically created by %s. The AI has analyzed the release and provided recommendations above.*`,
@@ -108,7 +128,7 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 		botName,
 		botName)
 
-	commitMessage = fmt.Sprintf("🤖 %s: Update %s to %s\n\n%s", botName, networkName, releaseTag, summary.ReleaseSummary)
+	commitMessage = fmt.Sprintf("🤖 %s: Update %s to %s\n\n%s", botName, networkName, cleanReleaseTag, summary.ReleaseSummary)
 
 	return title, body, commitMessage
 }
