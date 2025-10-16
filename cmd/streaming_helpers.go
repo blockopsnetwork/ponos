@@ -53,7 +53,7 @@ func (m *tuiModel) completeStreamingMessage() {
 
 func (m *tuiModel) updateStreamingToolProgress(toolID, status string) {
 	if msg := m.findMessageByID(m.streamingToolID); msg != nil {
-		msg.Content = fmt.Sprintf("🔧 %s", status)
+		msg.Content = status
 		m.updateViewportContent()
 	}
 }
