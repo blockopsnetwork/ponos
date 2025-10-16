@@ -116,7 +116,7 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 ---
 **About this PR:**
 - 🤖 **Created by:** %s Bot
-- 🔍 **AI Analysis:** Comprehensive release analysis performed
+- 🔍 **Node Operator Agent Analysis:** Comprehensive release analysis performed
 - ⚡ **Action Required:** Review and decide whether to merge or close
 
 *This PR was automatically created by %s. The AI has analyzed the release and provided recommendations above.*`,

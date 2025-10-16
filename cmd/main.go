@@ -150,7 +150,6 @@ func runAgentTUI() {
 	var logger *slog.Logger
 	logFile, err := os.OpenFile("/tmp/ponos-tui.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
-		// If we can't create log file, use a discard logger
 		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 	} else {
 		logger = slog.New(slog.NewJSONHandler(logFile, nil))
@@ -159,15 +158,14 @@ func runAgentTUI() {
 
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Failed to load configuration: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Please check your environment variables.\n")
 		logger.Error("failed to load configuration", "error", err)
 		os.Exit(1)
 	}
 	
-	// Validate GitHub bot configuration
 	if err := cfg.ValidateGitHubBotConfig(); err != nil {
-		fmt.Fprintf(os.Stderr, "❌ GitHub configuration error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "GitHub configuration error: %v\n", err)
 		fmt.Fprintf(os.Stderr, "\nRequired environment variables:\n")
 		fmt.Fprintf(os.Stderr, "  • Either set GITHUB_TOKEN for personal access token authentication\n")
 		fmt.Fprintf(os.Stderr, "  • Or set all three for GitHub App authentication:\n")
@@ -194,9 +192,9 @@ func runAgentTUI() {
 
 	agent, err := NewNodeOperatorAgent(logger)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Failed to create AI agent: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Please check your AI service configuration (OpenAI API key, etc.)\n")
-		logger.Error("failed to create AI agent", "error", err)
+		fmt.Fprintf(os.Stderr, "Failed to instantiate agent: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Please check your agent-core service configuration (OpenAI API key, etc.)\n")
+		logger.Error("failed to instantiate agent", "error", err)
 		os.Exit(1)
 	}
 
@@ -209,7 +207,6 @@ func runAgentTUI() {
 	}
 	bot.githubHandler = NewGitHubDeployHandler(bot)
 
-	// Start TUI agent interface
 	tui := NewPonosAgentTUI(bot, logger)
 	tui.Start()
 }
@@ -389,7 +386,6 @@ func (b *Bot) handleGitHubMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set CORS headers for agent-core access
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
@@ -464,7 +460,6 @@ func (b *Bot) handleMCPToolCall(w http.ResponseWriter, mcpRequest MCPRequest) {
 		arguments = make(map[string]interface{})
 	}
 
-	// Use existing GitHub MCP client
 	result, err := b.mcpClient.CallTool(context.Background(), toolName, arguments)
 	if err != nil {
 		b.logger.Error("MCP tool call failed", "tool", toolName, "error", err)

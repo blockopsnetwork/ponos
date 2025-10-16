@@ -174,7 +174,6 @@ func (h *GitHubDeployHandler) HandleChainUpdate(updateType, text, userID string)
 func (h *GitHubDeployHandler) startNetworkUpdate(network, updateType, userID string) {
 	ctx := context.Background()
 
-	// Get real release data from nodereleases.com API
 	if h.bot.agent == nil {
 		h.notifyError(h.bot.config.SlackUpdateChannel, "AI agent not available for network updates")
 		return
