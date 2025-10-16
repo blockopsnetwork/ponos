@@ -437,7 +437,6 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "thinking":
 			m.loadingMsg = msg.update.Message
 		case "tool_start":
-			// Show tool execution in both status and chat history
 			m.loadingMsg = fmt.Sprintf("Executing %s...", msg.update.Tool)
 			m.messages = append(m.messages, ChatMessage{
 				ID:        generateMessageID(),

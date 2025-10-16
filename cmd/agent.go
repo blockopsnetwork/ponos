@@ -34,11 +34,6 @@ type AgentSummary struct {
 	Error               string   `json:"error,omitempty"`
 }
 
-type YAMLAnalysisResult struct {
-	BlockchainContainers []string `json:"blockchain_containers"`
-	Reasoning            string   `json:"reasoning"`
-	NetworkTypes         []string `json:"network_types"`
-}
 
 type NetworkReleaseInfo struct {
 	Network    string      `json:"network"`
@@ -413,11 +408,7 @@ func (agent *NodeOperatorAgent) parseYAMLAnalysisResponse(response string) []str
 	return repos
 }
 
-type ConversationResponse struct {
-	Content  string
-	Finished bool
-	Error    error
-}
+// Removed ConversationResponse: unused legacy type
 
 type StreamingUpdate struct {
 	Type         string // "thinking", "tool_start", "tool_result", "assistant", "complete", "stream_append"
@@ -658,10 +649,9 @@ func (agent *NodeOperatorAgent) AnalyzeUpgradeRequestWithContext(ctx context.Con
 		return nil, fmt.Errorf("failed to parse user intent: %w", err)
 	}
 
-	// Infrastructure analysis now handled dynamically by LLM via analyze_current_deployment tool
 	infrastructure := &InfrastructureContext{
 		DetectedClients: []DetectedClient{},
-		Confidence:     "dynamic", // LLM determines this at runtime
+		Confidence:     "dynamic", 
 	}
 
 	request := &EnhancedUpgradeRequest{
@@ -682,63 +672,6 @@ func (agent *NodeOperatorAgent) AnalyzeUpgradeRequestWithContext(ctx context.Con
 	return request, nil
 }
 
-
-
-func (agent *NodeOperatorAgent) extractImagesFromYAML(content string) []string {
-	yamlOps := NewYAMLOperations()
-	return yamlOps.ExtractImageReposFromYAML(content)
-}
-
-
-func (agent *NodeOperatorAgent) inferDeploymentType(clients []DetectedClient) string {
-	if len(clients) == 0 {
-		return "unknown"
-	}
-
-	clientTypes := make(map[string]bool)
-	for _, client := range clients {
-		clientTypes[client.ClientType] = true
-	}
-
-	if clientTypes["execution"] && clientTypes["consensus"] {
-		return "validator"  
-	} else if clientTypes["execution"] {
-		return "fullnode" 
-	} else if clientTypes["node"] {
-		return "node"    
-	}
-
-	return "unknown"
-}
-
-func (agent *NodeOperatorAgent) inferNetworkEnvironment(clients []DetectedClient) string {
-	for _, client := range clients {
-		lowerPath := strings.ToLower(client.FilePath)
-		lowerTag := strings.ToLower(client.CurrentTag)
-		
-		if strings.Contains(lowerPath, "testnet") || strings.Contains(lowerPath, "sepolia") || 
-		   strings.Contains(lowerPath, "holesky") || strings.Contains(lowerTag, "testnet") {
-			return "testnet"
-		}
-		if strings.Contains(lowerPath, "mainnet") || strings.Contains(lowerTag, "mainnet") {
-			return "mainnet"
-		}
-	}
-	return "unknown"
-}
-
-func (agent *NodeOperatorAgent) calculateConfidence(ctx *InfrastructureContext) string {
-	if len(ctx.DetectedClients) == 0 {
-		return "low"
-	}
-	if len(ctx.DetectedClients) >= 2 && ctx.DeploymentType != "unknown" {
-		return "high"
-	}
-	if len(ctx.DetectedClients) >= 1 {
-		return "medium"
-	}
-	return "low"
-}
 
 func (agent *NodeOperatorAgent) determineIfClarificationNeeded(request *EnhancedUpgradeRequest) string {
 	if request.Intent.Network == "unknown" && len(request.Infrastructure.DetectedClients) > 1 {
@@ -982,10 +915,6 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 			Draft:       selectedRelease.Release.Draft,
 		},
 	}, nil
-}
-
-func (agent *NodeOperatorAgent) getFileContentFromConfig(ctx context.Context, filePath string) (string, error) {
-	return "", fmt.Errorf("file content retrieval not implemented yet")
 }
 
 func (agent *NodeOperatorAgent) getPreferredClientTypes(network string) []string {
