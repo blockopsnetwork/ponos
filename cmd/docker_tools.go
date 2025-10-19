@@ -30,7 +30,6 @@ func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClie
 		}
 	}
 
-	// Fetch Docker tags from node-releases API instead of Docker Hub
 	for img := range imageToTag {
 		tag, err := d.fetchLatestTagFromNodeReleases(network, client)
 		if err != nil {
@@ -57,8 +56,6 @@ func (d *DockerOperations) fetchLatestTagFromNodeReleases(network, client string
 	query.Set("network", strings.ToLower(network))
 	if client != "" {
 		query.Set("client_type", strings.ToLower(client))
-		// Retain legacy client param for compatibility with older API versions
-		query.Set("client", strings.ToLower(client))
 	}
 	releasesURL.RawQuery = query.Encode()
 
@@ -93,7 +90,6 @@ func (d *DockerOperations) fetchLatestTagFromNodeReleases(network, client string
 		return "", fmt.Errorf("node-releases API returned no releases for network=%s", network)
 	}
 
-	// Return the docker tag from the first matching release
 	for _, release := range apiResp.Releases {
 		if release.Metadata.DockerHubTag != "" {
 			return release.Metadata.DockerHubTag, nil

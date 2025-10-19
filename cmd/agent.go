@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-// Helper function to safely extract string from map
 func getStringFromMap(m map[string]interface{}, key string) string {
 	if val, ok := m[key]; ok && val != nil {
 		if str, ok := val.(string); ok {
@@ -305,7 +304,6 @@ func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Read
 		case "todo_update":
 			agent.logger.Info("Stream TODO update", "message", message)
 
-			// Parse TODO data from the stream event
 			var todos []TodoItem
 			if todosInterface, ok := streamEvent["todos"].([]interface{}); ok {
 				for _, todoInterface := range todosInterface {
@@ -454,7 +452,6 @@ type StreamingUpdate struct {
 	MessageID    string
 	IsAppending  bool
 
-	// TODO fields for task planning visibility
 	Todos    []TodoItem `json:"todos,omitempty"`
 	ToolName string     `json:"tool_name,omitempty"`
 }

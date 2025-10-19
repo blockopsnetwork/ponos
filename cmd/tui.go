@@ -106,12 +106,10 @@ type tuiModel struct {
 	streamingMessageID string
 	streamingToolID    string
 
-	// Simple TODO tracking for task progress
 	currentTodos []TodoItem
 	showTodos    bool
 }
 
-// TodoItem is defined in agent.go
 
 type ChatMessage struct {
 	ID        string
@@ -453,12 +451,10 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 			m.updateViewportContent()
 		case "todo_update":
-			// Handle TODO updates directly from StreamingUpdate
 			if len(msg.update.Todos) > 0 {
 				m.currentTodos = msg.update.Todos
 				m.showTodos = true
 
-				// Add activity message for TODO operations
 				var activityMsg string
 				switch msg.update.ToolName {
 				case "create_todo":
@@ -579,7 +575,6 @@ func (m *tuiModel) View() string {
 
 	sections = append(sections, titleSection)
 
-	// Show messages OR checkpoint line
 	if len(m.messages) > 0 {
 		sections = append(sections, m.viewport.View())
 	} else {
@@ -596,7 +591,6 @@ func (m *tuiModel) View() string {
 		sections = append(sections, subtitleStyle.Render(checkpointLine))
 	}
 
-	// ALWAYS show TODOs when active - this is the key user visibility feature
 	if len(m.currentTodos) > 0 {
 		todoSection := m.renderTodoSection()
 		sections = append(sections, todoSection)
@@ -808,7 +802,6 @@ func (m *tuiModel) renderTodoSection() string {
 
 	var todoLines []string
 
-	// Count status
 	var pending, inProgress, completed int
 	for _, todo := range m.currentTodos {
 		switch todo.Status {
@@ -821,7 +814,6 @@ func (m *tuiModel) renderTodoSection() string {
 		}
 	}
 
-	// Header with progress
 	header := fmt.Sprintf("📋 Active Tasks (%d pending, %d in progress, %d completed):",
 		pending, inProgress, completed)
 	todoLines = append(todoLines, titleStyle.Render(header))
@@ -856,31 +848,25 @@ func (m *tuiModel) renderTodoSection() string {
 }
 
 func (m *tuiModel) handleTodoUpdate(message string) error {
-	// The message from StreamingUpdate.Message should be directly parseable JSON
-	// But let's try to parse the full streaming update structure first
 	var streamData struct {
 		Type     string     `json:"type"`
 		Todos    []TodoItem `json:"todos"`
 		ToolName string     `json:"tool_name"`
 	}
 
-	// Debug: log what we're trying to parse
 	m.tui.logger.Info("Handling TODO update", "message", message)
 
 	if err := json.Unmarshal([]byte(message), &streamData); err != nil {
-		// Try parsing as direct TODO data if message is just the JSON part
 		m.tui.logger.Warn("Failed to parse todo update JSON", "error", err, "message", message)
 		return m.handleSimpleTodoMessage(message)
 	}
 
-	// Update current TODOs if we got valid data
 	if len(streamData.Todos) > 0 {
 		m.currentTodos = streamData.Todos
 		m.showTodos = true
 
 		m.tui.logger.Info("Updated TODOs", "count", len(streamData.Todos), "tool", streamData.ToolName)
 
-		// Add activity message for TODO operations
 		if streamData.ToolName != "" {
 			var activityMsg string
 			switch streamData.ToolName {
@@ -909,7 +895,6 @@ func (m *tuiModel) handleTodoUpdate(message string) error {
 }
 
 func (m *tuiModel) handleSimpleTodoMessage(message string) error {
-	// Handle simple text-based TODO messages
 	if strings.Contains(message, "TODO") || strings.Contains(message, "task") {
 		m.messages = append(m.messages, ChatMessage{
 			ID:        generateMessageID(),
