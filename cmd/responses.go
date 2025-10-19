@@ -46,9 +46,25 @@ func BuildReleaseNotificationBlocks(payload ReleasesWebhookPayload, summary *Age
 	messageText.WriteString(fmt.Sprintf("*Network:* %s\n", repo.NetworkName))
 	messageText.WriteString(fmt.Sprintf("*Client:* %s\n", repo.ClientType))
 	messageText.WriteString(fmt.Sprintf("*Tag:* %s\n", release.TagName))
+	if repo.DockerTag != "" && !strings.EqualFold(repo.DockerTag, release.TagName) {
+		messageText.WriteString(fmt.Sprintf("*Docker Tag:* %s\n", repo.DockerTag))
+	}
 	messageText.WriteString(fmt.Sprintf("*Published:* %s\n\n", release.PublishedAt))
 
-	messageText.WriteString(fmt.Sprintf(":memo: *AI Generated Release Summary*\n%s\n\n", summary.ReleaseSummary))
+	releaseSummary := strings.TrimSpace(summary.ReleaseSummary)
+	if releaseSummary == "" || strings.EqualFold(releaseSummary, "Not specified") {
+		if release.Body != "" {
+			bodyPreview := release.Body
+			if len(bodyPreview) > 600 {
+				bodyPreview = bodyPreview[:600] + "\n\n…"
+			}
+			releaseSummary = fmt.Sprintf("Summary derived from GitHub release notes:\n%s", bodyPreview)
+		} else {
+			releaseSummary = "Upgrade generated without additional release analysis details."
+		}
+	}
+
+	messageText.WriteString(fmt.Sprintf(":memo: *AI Generated Release Summary*\n%s\n\n", releaseSummary))
 
 	messageText.WriteString(":gear: *Next Steps*\n")
 	messageText.WriteString("- PR created → review/merge required.\n")
@@ -79,16 +95,16 @@ func extractVersionTag(aiResponse string) string {
 	if matches := re.FindStringSubmatch(aiResponse); len(matches) > 1 {
 		return matches[1]
 	}
-	
+
 	re = regexp.MustCompile(`\b(v?\d+\.\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9\-\.]+)?)\b`)
 	if matches := re.FindStringSubmatch(aiResponse); len(matches) > 1 {
 		return matches[1]
 	}
-	
+
 	return aiResponse
 }
 
-func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSummary) (title, body, commitMessage string) {
+func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSummary, release *ReleaseInfo) (title, body, commitMessage string) {
 	if botName == "" {
 		botName = "Ponos"
 	}
@@ -98,6 +114,29 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 		title = summary.PRTitle
 	} else {
 		title = fmt.Sprintf("%s: Update %s to %s", botName, networkName, cleanReleaseTag)
+	}
+
+	releaseSummary := strings.TrimSpace(summary.ReleaseSummary)
+	if releaseSummary == "" || strings.EqualFold(releaseSummary, "Not specified") {
+		if release != nil && release.Body != "" {
+			bodyPreview := release.Body
+			if len(bodyPreview) > 1000 {
+				bodyPreview = bodyPreview[:1000] + "\n\n…"
+			}
+			releaseSummary = fmt.Sprintf("Summary derived from GitHub release notes:\n%s", bodyPreview)
+		} else {
+			releaseSummary = fmt.Sprintf("Upgrade %s to %s based on latest release information.", networkName, cleanReleaseTag)
+		}
+	}
+
+	configChanges := strings.TrimSpace(summary.ConfigChangesNeeded)
+	if configChanges == "" || strings.EqualFold(configChanges, "Not specified") {
+		configChanges = "Updated Docker image tags to reference the latest stable release."
+	}
+
+	riskAssessment := strings.TrimSpace(summary.RiskAssessment)
+	if riskAssessment == "" || strings.EqualFold(riskAssessment, "Not specified") {
+		riskAssessment = "Review release notes and run smoke tests before promoting to production."
 	}
 
 	body = fmt.Sprintf(`## 🤖 Automated Update by %s
@@ -121,18 +160,17 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 
 *This PR was automatically created by %s. The AI has analyzed the release and provided recommendations above.*`,
 		botName,
-		summary.ReleaseSummary,
-		summary.ConfigChangesNeeded,
-		summary.RiskAssessment,
+		releaseSummary,
+		configChanges,
+		riskAssessment,
 		strings.ToUpper(summary.Severity),
 		botName,
 		botName)
 
-	commitMessage = fmt.Sprintf("🤖 %s: Update %s to %s\n\n%s", botName, networkName, cleanReleaseTag, summary.ReleaseSummary)
+	commitMessage = fmt.Sprintf("🤖 %s: Update %s to %s\n\n%s", botName, networkName, cleanReleaseTag, releaseSummary)
 
 	return title, body, commitMessage
 }
-
 
 func createStatusBlock(icon, title string) slack.Block {
 	return slack.NewSectionBlock(
