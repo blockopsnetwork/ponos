@@ -34,6 +34,7 @@ type Repository struct {
 	NetworkKey  string `json:"network_key"`
 	NetworkName string `json:"network_name"`
 	ReleaseTag  string `json:"release_tag"`
+	DockerTag   string `json:"docker_tag"`
 	ClientType  string `json:"client_type"`
 }
 

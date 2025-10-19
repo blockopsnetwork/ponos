@@ -839,25 +839,31 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
 	}
 
+	type releaseMetadata struct {
+		ClientType   string `json:"client_type"`
+		NetworkName  string `json:"network_name"`
+		DisplayName  string `json:"display_name"`
+		DockerRepo   string `json:"docker_repo"`
+		DockerHubTag string `json:"dockerhub_tag"`
+	}
+
+	type releaseRecord struct {
+		Repository string `json:"repository"`
+		Release    *struct {
+			TagName     string `json:"tag_name"`
+			Name        string `json:"name"`
+			Body        string `json:"body"`
+			HTMLURL     string `json:"html_url"`
+			PublishedAt string `json:"published_at"`
+			Prerelease  bool   `json:"prerelease"`
+			Draft       bool   `json:"draft"`
+		} `json:"release"`
+		Metadata *releaseMetadata `json:"metadata"`
+	}
+
 	var releaseResp struct {
-		Releases []struct {
-			Repository string `json:"repository"`
-			Release    *struct {
-				TagName     string `json:"tag_name"`
-				Name        string `json:"name"`
-				Body        string `json:"body"`
-				HTMLURL     string `json:"html_url"`
-				PublishedAt string `json:"published_at"`
-				Prerelease  bool   `json:"prerelease"`
-				Draft       bool   `json:"draft"`
-			} `json:"release"`
-			Metadata *struct {
-				ClientType  string `json:"client_type"`
-				NetworkName string `json:"network_name"`
-				DisplayName string `json:"display_name"`
-			} `json:"metadata"`
-		} `json:"releases"`
-		Total int `json:"total"`
+		Releases []releaseRecord `json:"releases"`
+		Total    int             `json:"total"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&releaseResp); err != nil {
@@ -870,23 +876,7 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 		return nil, fmt.Errorf("no releases found for network: %s with client_type: %s", network, clientType)
 	}
 
-	var selectedRelease *struct {
-		Repository string `json:"repository"`
-		Release    *struct {
-			TagName     string `json:"tag_name"`
-			Name        string `json:"name"`
-			Body        string `json:"body"`
-			HTMLURL     string `json:"html_url"`
-			PublishedAt string `json:"published_at"`
-			Prerelease  bool   `json:"prerelease"`
-			Draft       bool   `json:"draft"`
-		} `json:"release"`
-		Metadata *struct {
-			ClientType  string `json:"client_type"`
-			NetworkName string `json:"network_name"`
-			DisplayName string `json:"display_name"`
-		} `json:"metadata"`
-	}
+	var selectedRelease *releaseRecord
 
 	if clientType != "" {
 		selectedRelease = &releaseResp.Releases[0]
@@ -930,7 +920,7 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 		}
 	}
 
-	if selectedRelease.Release == nil {
+	if selectedRelease == nil || selectedRelease.Release == nil {
 		return nil, fmt.Errorf("release data is nil for network: %s", network)
 	}
 
@@ -939,15 +929,28 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 		return nil, fmt.Errorf("invalid repository format: %s", selectedRelease.Repository)
 	}
 
+	var displayName, networkName, metadataClientType, dockerTag string
+	if selectedRelease.Metadata != nil {
+		displayName = selectedRelease.Metadata.DisplayName
+		networkName = selectedRelease.Metadata.NetworkName
+		metadataClientType = selectedRelease.Metadata.ClientType
+		dockerTag = selectedRelease.Metadata.DockerHubTag
+	}
+
+	if dockerTag == "" {
+		dockerTag = selectedRelease.Release.TagName
+	}
+
 	return &NetworkReleaseInfo{
 		Network: network,
 		Repository: Repository{
 			Owner:       repoParts[0],
 			Name:        repoParts[1],
-			DisplayName: selectedRelease.Metadata.DisplayName,
-			NetworkName: selectedRelease.Metadata.NetworkName,
-			ClientType:  selectedRelease.Metadata.ClientType,
+			DisplayName: displayName,
+			NetworkName: networkName,
+			ClientType:  metadataClientType,
 			ReleaseTag:  selectedRelease.Release.TagName,
+			DockerTag:   dockerTag,
 		},
 		Release: ReleaseInfo{
 			TagName:     selectedRelease.Release.TagName,

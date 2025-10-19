@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
+	"strings"
 )
 
 type DockerOperations struct{}
@@ -40,10 +43,26 @@ func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClie
 }
 
 func (d *DockerOperations) fetchLatestTagFromNodeReleases(network, client string) (string, error) {
-	// Call node-releases API with specific network and client filters
-	url := fmt.Sprintf("https://api.nodereleases.com/releases?network=%s&client=%s", network, client)
+	baseURL := os.Getenv("NODE_RELEASES_API_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api.nodereleases.com"
+	}
 
-	resp, err := http.Get(url)
+	releasesURL, err := url.Parse(strings.TrimRight(baseURL, "/") + "/releases")
+	if err != nil {
+		return "", fmt.Errorf("invalid NODE_RELEASES_API_BASE_URL %q: %w", baseURL, err)
+	}
+
+	query := releasesURL.Query()
+	query.Set("network", strings.ToLower(network))
+	if client != "" {
+		query.Set("client_type", strings.ToLower(client))
+		// Retain legacy client param for compatibility with older API versions
+		query.Set("client", strings.ToLower(client))
+	}
+	releasesURL.RawQuery = query.Encode()
+
+	resp, err := http.Get(releasesURL.String())
 	if err != nil {
 		return "", err
 	}
@@ -67,11 +86,22 @@ func (d *DockerOperations) fetchLatestTagFromNodeReleases(network, client string
 		return "", err
 	}
 
+	if len(apiResp.Releases) == 0 {
+		if client != "" {
+			return d.fetchLatestTagFromNodeReleases(network, "")
+		}
+		return "", fmt.Errorf("node-releases API returned no releases for network=%s", network)
+	}
+
 	// Return the docker tag from the first matching release
 	for _, release := range apiResp.Releases {
 		if release.Metadata.DockerHubTag != "" {
 			return release.Metadata.DockerHubTag, nil
 		}
+	}
+
+	if client != "" {
+		return d.fetchLatestTagFromNodeReleases(network, "")
 	}
 
 	return "", fmt.Errorf("docker tag not found for network=%s client=%s", network, client)
