@@ -816,25 +816,8 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 	if baseURL == "" {
 		baseURL = "https://api.nodereleases.com"
 	}
-	apiURL := fmt.Sprintf("%s/releases?network=%s&limit=20", baseURL, network)
-	if clientType != "" {
-		apiURL += fmt.Sprintf("&client_type=%s", clientType)
-		agent.logger.Info("Fetching latest release with client type filter", "network", network, "client_type", clientType, "url", apiURL)
-	} else {
-		agent.logger.Info("Fetching latest release without client type filter", "network", network, "url", apiURL)
-	}
 
-	resp, err := http.Get(apiURL)
-	if err != nil {
-		agent.logger.Error("Failed to fetch release data", "error", err, "network", network)
-		return nil, fmt.Errorf("failed to fetch release data: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		agent.logger.Error("API returned non-200 status", "status", resp.StatusCode, "network", network)
-		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
-	}
+	requestedClientType := strings.ToLower(clientType)
 
 	type releaseMetadata struct {
 		ClientType   string `json:"client_type"`
@@ -863,9 +846,49 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 		Total    int             `json:"total"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&releaseResp); err != nil {
-		agent.logger.Error("Failed to decode API response", "error", err, "network", network)
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	for attempt := 0; attempt < 2; attempt++ {
+		apiURL := fmt.Sprintf("%s/releases?network=%s&limit=20", baseURL, network)
+		if attempt == 0 && requestedClientType != "" {
+			apiURL += fmt.Sprintf("&client_type=%s&client=%s", requestedClientType, requestedClientType)
+			agent.logger.Info("Fetching latest release with client type filter", "network", network, "client_type", requestedClientType, "url", apiURL)
+		} else {
+			agent.logger.Info("Fetching latest release without client type filter", "network", network, "url", apiURL)
+		}
+
+		resp, err := http.Get(apiURL)
+		if err != nil {
+			agent.logger.Error("Failed to fetch release data", "error", err, "network", network)
+			return nil, fmt.Errorf("failed to fetch release data: %w", err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			agent.logger.Error("Failed to read release response body", "error", err)
+			return nil, fmt.Errorf("failed to read response body: %w", err)
+		}
+
+		releaseResp = struct {
+			Releases []releaseRecord `json:"releases"`
+			Total    int             `json:"total"`
+		}{}
+
+		if err := json.Unmarshal(body, &releaseResp); err != nil {
+			agent.logger.Error("Failed to decode API response", "error", err, "network", network, "body", string(body))
+			return nil, fmt.Errorf("failed to decode response: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			agent.logger.Error("API returned non-200 status", "status", resp.StatusCode, "network", network, "body", string(body))
+			return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+		}
+
+		if len(releaseResp.Releases) == 0 && attempt == 0 && requestedClientType != "" {
+			agent.logger.Warn("No releases found for client type filter, retrying without filter", "network", network, "client_type", requestedClientType)
+			continue
+		}
+
+		break
 	}
 
 	if len(releaseResp.Releases) == 0 {
@@ -873,48 +896,77 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 		return nil, fmt.Errorf("no releases found for network: %s with client_type: %s", network, clientType)
 	}
 
-	var selectedRelease *releaseRecord
-
-	if clientType != "" {
-		selectedRelease = &releaseResp.Releases[0]
-		clientTypeValue := "unknown"
-		if selectedRelease.Metadata != nil {
-			clientTypeValue = selectedRelease.Metadata.ClientType
-		}
-		agent.logger.Info("Selected release using API client type filter",
-			"repository", selectedRelease.Repository,
-			"client_type", clientTypeValue,
-			"tag", selectedRelease.Release.TagName)
-	} else {
-		preferredClientTypes := agent.getPreferredClientTypes(network)
-		agent.logger.Info("Looking for preferred client types", "network", network, "types", preferredClientTypes)
-
-		for _, preferredType := range preferredClientTypes {
-			for _, release := range releaseResp.Releases {
-				if release.Metadata != nil && strings.EqualFold(release.Metadata.ClientType, preferredType) {
-					selectedRelease = &release
-					agent.logger.Info("Selected release with preferred client type",
-						"repository", release.Repository,
-						"client_type", release.Metadata.ClientType,
-						"tag", release.Release.TagName)
-					break
-				}
+	preferredRepos := agent.getDeploymentRepositories(ctx, network)
+	preferredRepoSet := make(map[string]struct{}, len(preferredRepos))
+	for _, repo := range preferredRepos {
+		for _, candidate := range normalizedRepoCandidates(repo) {
+			if candidate != "" {
+				preferredRepoSet[candidate] = struct{}{}
 			}
-			if selectedRelease != nil {
+		}
+	}
+
+	preferredClientTypes := agent.getPreferredClientTypes(network)
+
+	selectedRelease := &releaseResp.Releases[0]
+	bestScore := -1
+
+	for i := range releaseResp.Releases {
+		rel := &releaseResp.Releases[i]
+		metadataRepo := ""
+		metadataClientType := ""
+		if rel.Metadata != nil {
+			metadataRepo = rel.Metadata.DockerRepo
+			metadataClientType = rel.Metadata.ClientType
+		}
+
+		repoMatch := false
+		for _, candidate := range normalizedRepoCandidates(metadataRepo) {
+			if _, ok := preferredRepoSet[candidate]; ok {
+				repoMatch = true
 				break
 			}
 		}
-
-		if selectedRelease == nil {
-			selectedRelease = &releaseResp.Releases[0]
-			fallbackClientType := "unknown"
-			if selectedRelease.Metadata != nil {
-				fallbackClientType = selectedRelease.Metadata.ClientType
+		if !repoMatch {
+			for _, candidate := range normalizedRepoCandidates(rel.Repository) {
+				if _, ok := preferredRepoSet[candidate]; ok {
+					repoMatch = true
+					break
+				}
 			}
-			agent.logger.Warn("No preferred client type found, using first available",
-				"repository", selectedRelease.Repository,
-				"client_type", fallbackClientType)
 		}
+
+		clientMatch := requestedClientType != "" && strings.EqualFold(metadataClientType, requestedClientType)
+		preferredMatch := false
+		if requestedClientType == "" {
+			for _, pref := range preferredClientTypes {
+				if strings.EqualFold(metadataClientType, pref) {
+					preferredMatch = true
+					break
+				}
+			}
+		}
+
+		score := 0
+		if repoMatch {
+			score += 4
+		}
+		if clientMatch {
+			score += 2
+		} else if preferredMatch {
+			score += 1
+		}
+
+		if score > bestScore {
+			bestScore = score
+			selectedRelease = rel
+		}
+	}
+
+	if bestScore <= 0 && requestedClientType != "" {
+		agent.logger.Warn("No strong match found; falling back to first release for requested client",
+			"network", network,
+			"client_type", requestedClientType)
 	}
 
 	if selectedRelease == nil || selectedRelease.Release == nil {
@@ -961,12 +1013,117 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 	}, nil
 }
 
+func (agent *NodeOperatorAgent) getDeploymentRepositories(ctx context.Context, network string) []string {
+	endpoint := fmt.Sprintf("%s/tools/analyze_current_deployment", agent.agentCoreURL)
+	payload := map[string]string{"network": network}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		agent.logger.Warn("Failed to marshal deployment analysis payload", "error", err)
+		return nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
+	if err != nil {
+		agent.logger.Warn("Failed to create deployment analysis request", "error", err)
+		return nil
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := agent.httpClient.Do(req)
+	if err != nil {
+		agent.logger.Warn("Deployment analysis request failed", "error", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		agent.logger.Warn("Deployment analysis returned non-200", "status", resp.StatusCode)
+		return nil
+	}
+
+	var result struct {
+		Success  bool `json:"success"`
+		Analysis struct {
+			Clients map[string]struct {
+				Repo string `json:"repo"`
+			} `json:"clients"`
+		} `json:"analysis"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		agent.logger.Warn("Failed to decode deployment analysis response", "error", err)
+		return nil
+	}
+
+	if !result.Success {
+		agent.logger.Warn("Deployment analysis reported failure", "network", network)
+		return nil
+	}
+
+	repoSet := make(map[string]struct{})
+	for _, client := range result.Analysis.Clients {
+		repo := strings.TrimSpace(client.Repo)
+		if repo != "" && !strings.EqualFold(repo, "unknown") {
+			if _, exists := repoSet[repo]; !exists {
+				repoSet[repo] = struct{}{}
+			}
+		}
+	}
+	repos := make([]string, 0, len(repoSet))
+	for repo := range repoSet {
+		repos = append(repos, repo)
+	}
+	return repos
+}
+
+func normalizedRepoCandidates(repo string) []string {
+	repo = strings.TrimSpace(strings.ToLower(repo))
+	if repo == "" {
+		return nil
+	}
+	if strings.HasPrefix(repo, "docker.io/") {
+		repo = strings.TrimPrefix(repo, "docker.io/")
+	}
+	if strings.HasPrefix(repo, "ghcr.io/") {
+		repo = strings.TrimPrefix(repo, "ghcr.io/")
+	}
+	repo = strings.TrimSuffix(repo, ":latest")
+	if idx := strings.Index(repo, "@"); idx != -1 {
+		repo = repo[:idx]
+	}
+	if idx := strings.Index(repo, ":"); idx != -1 {
+		repo = repo[:idx]
+	}
+	if repo == "" {
+		return nil
+	}
+
+	candidates := []string{repo}
+	if parts := strings.Split(repo, "/"); len(parts) > 1 {
+		name := parts[len(parts)-1]
+		if name != "" {
+			candidates = append(candidates, name)
+		}
+	}
+
+	unique := make(map[string]struct{}, len(candidates))
+	result := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, exists := unique[candidate]; !exists {
+			unique[candidate] = struct{}{}
+			result = append(result, candidate)
+		}
+	}
+	return result
+}
+
 func (agent *NodeOperatorAgent) getPreferredClientTypes(network string) []string {
 	switch strings.ToLower(network) {
 	case "ethereum":
 		return []string{"execution", "node", "consensus"}
 	case "polkadot", "kusama":
-		return []string{"node", "parachain"}
+		return []string{"archive", "validator", "full", "rpc", "node", "parachain"}
 	case "solana":
 		return []string{"validator", "node"}
 	default:
