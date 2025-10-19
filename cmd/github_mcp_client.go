@@ -229,6 +229,11 @@ func (g *GitHubMCPClient) CreateBranch(ctx context.Context, owner, repo, branchN
 
 	_, err := g.CallTool(ctx, "create_branch", args)
 	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(strings.ToLower(errMsg), "reference already exists") {
+			g.logger.Info("Branch already exists, continuing", "branch", branchName, "owner", owner, "repo", repo)
+			return nil
+		}
 		return fmt.Errorf("failed to create branch: %v", err)
 	}
 

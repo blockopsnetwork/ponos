@@ -303,11 +303,23 @@ func (h *GitHubDeployHandler) agentUpdatePR(ctx context.Context, payload Release
 
 	dockerTag := summary.DockerTag
 	if dockerTag == "" || dockerTag == "Not specified" {
-		dockerTag = repo.ReleaseTag
-		h.bot.logger.Warn("llm unable to infer docker tag, using GitHub release tag", "github_tag", repo.ReleaseTag)
+		if repo.DockerTag != "" {
+			h.bot.logger.Info("Using docker tag from release metadata", "docker_tag", repo.DockerTag)
+			dockerTag = repo.DockerTag
+		} else {
+			dockerTag = repo.ReleaseTag
+			h.bot.logger.Warn("llm unable to infer docker tag, using GitHub release tag", "github_tag", repo.ReleaseTag)
+		}
 	}
 
-	title, body, commitMessage := BuildPRContent(repo.NetworkName, dockerTag, h.mcpClient.botName, summary)
+	var releaseDetails *ReleaseInfo
+	for _, rel := range payload.Releases {
+		releaseCopy := rel
+		releaseDetails = &releaseCopy
+		break
+	}
+
+	title, body, commitMessage := BuildPRContent(repo.NetworkName, dockerTag, h.mcpClient.botName, summary, releaseDetails)
 
 	req := NetworkUpdateRequest{
 		DetectedNetworks: []string{strings.ToLower(repo.NetworkName)},
