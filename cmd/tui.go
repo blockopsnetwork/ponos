@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -16,13 +17,13 @@ import (
 )
 
 var (
-	brandColor   = lipgloss.Color("#FFFFFF") // white 
+	brandColor   = lipgloss.Color("#FFFFFF") // white
 	textColor    = lipgloss.Color("#E5E7EB") // light gray
 	subtleColor  = lipgloss.Color("#9CA3AF") // muted text
 	successColor = lipgloss.Color("#10B981") // green for success
 	errorColor   = lipgloss.Color("#EF4444") // red for errors
 	accentColor  = lipgloss.Color("#F59E0B") // yellow for highlights
-	purpleColor  = lipgloss.Color("#8B5CF6") // purple 
+	purpleColor  = lipgloss.Color("#8B5CF6") // purple
 
 	logoStyle = lipgloss.NewStyle().
 			Foreground(purpleColor).
@@ -87,8 +88,8 @@ type tuiModel struct {
 	viewport            viewport.Model
 	textarea            textarea.Model
 	messages            []ChatMessage
-	conversationHistory []map[string]string 
-	sessionID           string              
+	conversationHistory []map[string]string
+	sessionID           string
 	ready               bool
 	width               int
 	height              int
@@ -99,16 +100,22 @@ type tuiModel struct {
 	program             *tea.Program
 	cancelThinking      context.CancelFunc
 	showHelp            bool
-	animationFrame      int                 
-	
-	isStreaming         bool
-	streamingMessageID  string              
-	streamingToolID     string              
+	animationFrame      int
+
+	isStreaming        bool
+	streamingMessageID string
+	streamingToolID    string
+
+	// Simple TODO tracking for task progress
+	currentTodos []TodoItem
+	showTodos    bool
 }
 
+// TodoItem is defined in agent.go
+
 type ChatMessage struct {
-	ID        string   
-	Role      string  
+	ID        string
+	Role      string
 	Content   string
 	Timestamp time.Time
 	Actions   []string
@@ -127,7 +134,7 @@ type streamingUpdate struct {
 	update StreamingUpdate
 }
 
-type animationTick struct {}
+type animationTick struct{}
 
 type animationUpdate struct {
 	frame int
@@ -223,8 +230,8 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		if !m.ready {
-			logoHeight := 10 
-			titleHeight := 4 
+			logoHeight := 10
+			titleHeight := 4
 			loadingHeight := 1
 			helpHeight := 1
 			inputHeight := 4
@@ -445,6 +452,36 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Timestamp: time.Now(),
 			})
 			m.updateViewportContent()
+		case "todo_update":
+			// Handle TODO updates directly from StreamingUpdate
+			if len(msg.update.Todos) > 0 {
+				m.currentTodos = msg.update.Todos
+				m.showTodos = true
+
+				// Add activity message for TODO operations
+				var activityMsg string
+				switch msg.update.ToolName {
+				case "create_todo":
+					activityMsg = "📋 Created new task"
+				case "create_deployment_todos":
+					activityMsg = fmt.Sprintf("📋 Created deployment plan (%d tasks)", len(msg.update.Todos))
+				case "update_todo":
+					activityMsg = "✏️ Updated task status"
+				case "list_todos":
+					activityMsg = fmt.Sprintf("📋 Showing %d active tasks", len(msg.update.Todos))
+				default:
+					activityMsg = "📋 Updated tasks"
+				}
+
+				m.messages = append(m.messages, ChatMessage{
+					ID:        generateMessageID(),
+					Role:      "activity",
+					Content:   activityMsg,
+					Timestamp: time.Now(),
+				})
+
+				m.updateViewportContent()
+			}
 		case "tool_result":
 			var statusMsg, chatMsg string
 			if msg.update.Success {
@@ -454,11 +491,11 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				statusMsg = fmt.Sprintf("%s failed", msg.update.Tool)
 				chatMsg = fmt.Sprintf("%s failed", msg.update.Tool)
 			}
-			
+
 			if msg.update.Summary != "" {
 				chatMsg += fmt.Sprintf("\n└ %s", msg.update.Summary)
 			}
-			
+
 			m.loadingMsg = statusMsg
 			m.messages = append(m.messages, ChatMessage{
 				ID:        generateMessageID(),
@@ -542,6 +579,7 @@ func (m *tuiModel) View() string {
 
 	sections = append(sections, titleSection)
 
+	// Show messages OR checkpoint line
 	if len(m.messages) > 0 {
 		sections = append(sections, m.viewport.View())
 	} else {
@@ -556,6 +594,12 @@ func (m *tuiModel) View() string {
 			checkpointLine = checkpointText[:m.width]
 		}
 		sections = append(sections, subtitleStyle.Render(checkpointLine))
+	}
+
+	// ALWAYS show TODOs when active - this is the key user visibility feature
+	if len(m.currentTodos) > 0 {
+		todoSection := m.renderTodoSection()
+		sections = append(sections, todoSection)
 	}
 
 	if m.loading {
@@ -582,7 +626,6 @@ func (m *tuiModel) View() string {
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
-
 
 func (m *tuiModel) getAnimatedIndicator() string {
 	frames := []string{"|", "/", "-", "\\"}
@@ -756,4 +799,124 @@ func (tui *PonosAgentTUI) safeSendUpdate(updates chan<- StreamingUpdate, update 
 	default:
 		tui.logger.Warn("Update channel blocked or closed", "update", update.Type)
 	}
+}
+
+func (m *tuiModel) renderTodoSection() string {
+	if len(m.currentTodos) == 0 {
+		return ""
+	}
+
+	var todoLines []string
+
+	// Count status
+	var pending, inProgress, completed int
+	for _, todo := range m.currentTodos {
+		switch todo.Status {
+		case "pending":
+			pending++
+		case "in_progress":
+			inProgress++
+		case "completed":
+			completed++
+		}
+	}
+
+	// Header with progress
+	header := fmt.Sprintf("📋 Active Tasks (%d pending, %d in progress, %d completed):",
+		pending, inProgress, completed)
+	todoLines = append(todoLines, titleStyle.Render(header))
+	todoLines = append(todoLines, "") // Empty line for spacing
+
+	for i, todo := range m.currentTodos {
+		var emoji string
+		var color lipgloss.Color
+
+		switch todo.Status {
+		case "pending":
+			emoji = "⏳"
+			color = subtleColor
+		case "in_progress":
+			emoji = "🔄"
+			color = accentColor
+		case "completed":
+			emoji = "✅"
+			color = successColor
+		default:
+			emoji = "❓"
+			color = subtleColor
+		}
+
+		line := fmt.Sprintf("%d. %s %s", i+1, emoji, todo.Content)
+		styledLine := lipgloss.NewStyle().Foreground(color).Render(line)
+		todoLines = append(todoLines, styledLine)
+	}
+
+	todoLines = append(todoLines, "") // Empty line after TODOs
+	return lipgloss.JoinVertical(lipgloss.Left, todoLines...)
+}
+
+func (m *tuiModel) handleTodoUpdate(message string) error {
+	// The message from StreamingUpdate.Message should be directly parseable JSON
+	// But let's try to parse the full streaming update structure first
+	var streamData struct {
+		Type     string     `json:"type"`
+		Todos    []TodoItem `json:"todos"`
+		ToolName string     `json:"tool_name"`
+	}
+
+	// Debug: log what we're trying to parse
+	m.tui.logger.Info("Handling TODO update", "message", message)
+
+	if err := json.Unmarshal([]byte(message), &streamData); err != nil {
+		// Try parsing as direct TODO data if message is just the JSON part
+		m.tui.logger.Warn("Failed to parse todo update JSON", "error", err, "message", message)
+		return m.handleSimpleTodoMessage(message)
+	}
+
+	// Update current TODOs if we got valid data
+	if len(streamData.Todos) > 0 {
+		m.currentTodos = streamData.Todos
+		m.showTodos = true
+
+		m.tui.logger.Info("Updated TODOs", "count", len(streamData.Todos), "tool", streamData.ToolName)
+
+		// Add activity message for TODO operations
+		if streamData.ToolName != "" {
+			var activityMsg string
+			switch streamData.ToolName {
+			case "create_todo":
+				activityMsg = "📋 Created new task"
+			case "create_deployment_todos":
+				activityMsg = fmt.Sprintf("📋 Created deployment plan (%d tasks)", len(streamData.Todos))
+			case "update_todo":
+				activityMsg = "✏️ Updated task status"
+			case "list_todos":
+				activityMsg = fmt.Sprintf("📋 Showing %d active tasks", len(streamData.Todos))
+			default:
+				activityMsg = "📋 Updated tasks"
+			}
+
+			m.messages = append(m.messages, ChatMessage{
+				ID:        generateMessageID(),
+				Role:      "activity",
+				Content:   activityMsg,
+				Timestamp: time.Now(),
+			})
+		}
+	}
+
+	return nil
+}
+
+func (m *tuiModel) handleSimpleTodoMessage(message string) error {
+	// Handle simple text-based TODO messages
+	if strings.Contains(message, "TODO") || strings.Contains(message, "task") {
+		m.messages = append(m.messages, ChatMessage{
+			ID:        generateMessageID(),
+			Role:      "activity",
+			Content:   fmt.Sprintf("📋 %s", message),
+			Timestamp: time.Now(),
+		})
+	}
+	return nil
 }
