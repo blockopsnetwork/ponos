@@ -79,12 +79,12 @@ func extractVersionTag(aiResponse string) string {
 	if matches := re.FindStringSubmatch(aiResponse); len(matches) > 1 {
 		return matches[1]
 	}
-	
+
 	re = regexp.MustCompile(`\b(v?\d+\.\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9\-\.]+)?)\b`)
 	if matches := re.FindStringSubmatch(aiResponse); len(matches) > 1 {
 		return matches[1]
 	}
-	
+
 	return aiResponse
 }
 
@@ -132,7 +132,6 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 
 	return title, body, commitMessage
 }
-
 
 func createStatusBlock(icon, title string) slack.Block {
 	return slack.NewSectionBlock(

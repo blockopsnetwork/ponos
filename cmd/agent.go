@@ -14,6 +14,16 @@ import (
 	"time"
 )
 
+// Helper function to safely extract string from map
+func getStringFromMap(m map[string]interface{}, key string) string {
+	if val, ok := m[key]; ok && val != nil {
+		if str, ok := val.(string); ok {
+			return str
+		}
+	}
+	return ""
+}
+
 type NodeOperatorAgent struct {
 	logger       *slog.Logger
 	agentCoreURL string
@@ -34,7 +44,6 @@ type AgentSummary struct {
 	Error               string   `json:"error,omitempty"`
 }
 
-
 type NetworkReleaseInfo struct {
 	Network    string      `json:"network"`
 	Repository Repository  `json:"repository"`
@@ -43,34 +52,34 @@ type NetworkReleaseInfo struct {
 
 type InfrastructureContext struct {
 	DetectedClients    []DetectedClient `json:"detected_clients"`
-	DeploymentType     string          `json:"deployment_type"`
-	NetworkEnvironment string          `json:"network_environment"`
-	ConfiguredImages   []string        `json:"configured_images"`
-	Confidence         string          `json:"confidence"`
+	DeploymentType     string           `json:"deployment_type"`
+	NetworkEnvironment string           `json:"network_environment"`
+	ConfiguredImages   []string         `json:"configured_images"`
+	Confidence         string           `json:"confidence"`
 }
 
 type DetectedClient struct {
-	Repository   string `json:"repository"`
-	CurrentTag   string `json:"current_tag"`
-	ClientType   string `json:"client_type"`
-	DockerImage  string `json:"docker_image"`
-	FilePath     string `json:"file_path"`
-	NetworkName  string `json:"network_name"`
+	Repository  string `json:"repository"`
+	CurrentTag  string `json:"current_tag"`
+	ClientType  string `json:"client_type"`
+	DockerImage string `json:"docker_image"`
+	FilePath    string `json:"file_path"`
+	NetworkName string `json:"network_name"`
 }
 
 type EnhancedUpgradeRequest struct {
-	UserMessage        string                  `json:"user_message"`
-	Intent            *UpgradeIntent          `json:"intent"`
-	Infrastructure    *InfrastructureContext  `json:"infrastructure"`
-	NeedsClarification bool                   `json:"needs_clarification"`
-	ClarificationPrompt string                `json:"clarification_prompt,omitempty"`
-	TargetClientType   string                `json:"target_client_type,omitempty"`
+	UserMessage         string                 `json:"user_message"`
+	Intent              *UpgradeIntent         `json:"intent"`
+	Infrastructure      *InfrastructureContext `json:"infrastructure"`
+	NeedsClarification  bool                   `json:"needs_clarification"`
+	ClarificationPrompt string                 `json:"clarification_prompt,omitempty"`
+	TargetClientType    string                 `json:"target_client_type,omitempty"`
 }
 
 func NewNodeOperatorAgent(logger *slog.Logger) (*NodeOperatorAgent, error) {
 	agentCoreURL := os.Getenv("AGENT_CORE_URL")
 	if agentCoreURL == "" {
-		agentCoreURL = "http://localhost:8001" 
+		agentCoreURL = "http://localhost:8001"
 	}
 
 	agent := &NodeOperatorAgent{
@@ -207,7 +216,6 @@ func (agent *NodeOperatorAgent) callAgentCore(ctx context.Context, prompt string
 	return content, nil
 }
 
-
 func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Reader, updates chan<- StreamingUpdate) error {
 	scanner := bufio.NewScanner(body)
 	var assistantMessageID string
@@ -272,7 +280,7 @@ func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Read
 		case "assistant":
 			agent.logger.Info("Stream assistant response", "message", message)
 			if assistantMessageID == "" {
-				assistantMessageID = fmt.Sprintf("msg_%d", time.Now().UnixNano())
+				assistantMessageID = generateID("msg")
 				updates <- StreamingUpdate{
 					Type:        "assistant",
 					Message:     message,
@@ -292,6 +300,33 @@ func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Read
 			updates <- StreamingUpdate{
 				Type:    "status",
 				Message: message,
+			}
+
+		case "todo_update":
+			agent.logger.Info("Stream TODO update", "message", message)
+
+			// Parse TODO data from the stream event
+			var todos []TodoItem
+			if todosInterface, ok := streamEvent["todos"].([]interface{}); ok {
+				for _, todoInterface := range todosInterface {
+					if todoMap, ok := todoInterface.(map[string]interface{}); ok {
+						todo := TodoItem{
+							Content:    getStringFromMap(todoMap, "content"),
+							Status:     getStringFromMap(todoMap, "status"),
+							ActiveForm: getStringFromMap(todoMap, "activeForm"),
+						}
+						todos = append(todos, todo)
+					}
+				}
+			}
+
+			toolName, _ := streamEvent["tool_name"].(string)
+
+			updates <- StreamingUpdate{
+				Type:     "todo_update",
+				Message:  message,
+				Todos:    todos,
+				ToolName: toolName,
 			}
 
 		case "complete":
@@ -408,19 +443,27 @@ func (agent *NodeOperatorAgent) parseYAMLAnalysisResponse(response string) []str
 	return repos
 }
 
-
 type StreamingUpdate struct {
-	Type         string // "thinking", "tool_start", "tool_result", "assistant", "complete", "stream_append"
+	Type         string // "thinking", "tool_start", "tool_result", "assistant", "complete", "stream_append", "todo_update"
 	Message      string
 	Tool         string
 	Success      bool
 	Summary      string // Detailed results or error information from tool execution
-	SessionID    string 
-	CheckpointID string 
-	MessageID    string 
-	IsAppending  bool  
+	SessionID    string
+	CheckpointID string
+	MessageID    string
+	IsAppending  bool
+
+	// TODO fields for task planning visibility
+	Todos    []TodoItem `json:"todos,omitempty"`
+	ToolName string     `json:"tool_name,omitempty"`
 }
 
+type TodoItem struct {
+	Content    string `json:"content"`
+	Status     string `json:"status"` // pending, in_progress, completed
+	ActiveForm string `json:"active_form"`
+}
 
 func (agent *NodeOperatorAgent) ProcessConversationWithStreaming(ctx context.Context, userMessage string, updates chan<- StreamingUpdate) error {
 	agent.logger.Info("ProcessConversationWithStreaming called", "message", userMessage)
@@ -539,7 +582,6 @@ func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreamingAndHist
 	return agent.processStreamingResponseWithUpdates(resp.Body, updates)
 }
 
-
 func (agent *NodeOperatorAgent) ParseUpgradeIntent(ctx context.Context, userMessage string) (*UpgradeIntent, error) {
 	prompt := fmt.Sprintf(`Analyze this user message to determine what action they want.
 
@@ -613,9 +655,9 @@ func (agent *NodeOperatorAgent) parseUpgradeIntentResponse(response string) *Upg
 	}
 
 	userMessage := strings.ToLower(response)
-	if strings.Contains(userMessage, "ethereum") || strings.Contains(userMessage, "geth") || 
-	   strings.Contains(userMessage, "lighthouse") || strings.Contains(userMessage, "reth") ||
-	   strings.Contains(userMessage, "besu") {
+	if strings.Contains(userMessage, "ethereum") || strings.Contains(userMessage, "geth") ||
+		strings.Contains(userMessage, "lighthouse") || strings.Contains(userMessage, "reth") ||
+		strings.Contains(userMessage, "besu") {
 		intent.Network = "ethereum"
 		intent.RequiresAction = true
 		intent.ActionType = "upgrade"
@@ -650,12 +692,12 @@ func (agent *NodeOperatorAgent) AnalyzeUpgradeRequestWithContext(ctx context.Con
 
 	infrastructure := &InfrastructureContext{
 		DetectedClients: []DetectedClient{},
-		Confidence:     "dynamic", 
+		Confidence:      "dynamic",
 	}
 
 	request := &EnhancedUpgradeRequest{
 		UserMessage:    userMessage,
-		Intent:        intent,
+		Intent:         intent,
 		Infrastructure: infrastructure,
 	}
 
@@ -667,10 +709,9 @@ func (agent *NodeOperatorAgent) AnalyzeUpgradeRequestWithContext(ctx context.Con
 	}
 
 	request.TargetClientType = agent.determineTargetClientType(request)
-	
+
 	return request, nil
 }
-
 
 func (agent *NodeOperatorAgent) determineIfClarificationNeeded(request *EnhancedUpgradeRequest) string {
 	if request.Intent.Network == "unknown" && len(request.Infrastructure.DetectedClients) > 1 {
@@ -685,7 +726,7 @@ func (agent *NodeOperatorAgent) determineIfClarificationNeeded(request *Enhanced
 		return agent.buildGeneralClarificationPrompt(request)
 	}
 
-	return "" 
+	return ""
 }
 
 func (agent *NodeOperatorAgent) getClientsForNetwork(request *EnhancedUpgradeRequest, network string) []DetectedClient {
@@ -724,7 +765,7 @@ func (agent *NodeOperatorAgent) buildClientTypeClarificationPrompt(request *Enha
 
 	prompt := fmt.Sprintf("I found multiple %s clients in your setup:\n\n", strings.Title(network))
 	for _, client := range clients {
-		prompt += fmt.Sprintf("- **%s** (%s client, currently %s) in %s\n", 
+		prompt += fmt.Sprintf("- **%s** (%s client, currently %s) in %s\n",
 			client.Repository, client.ClientType, client.CurrentTag, client.FilePath)
 	}
 
@@ -766,7 +807,7 @@ func (agent *NodeOperatorAgent) determineTargetClientType(request *EnhancedUpgra
 		}
 	}
 
-	return "" 
+	return ""
 }
 
 func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, network string) (*NetworkReleaseInfo, error) {
@@ -774,7 +815,11 @@ func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, net
 }
 
 func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx context.Context, network, clientType string) (*NetworkReleaseInfo, error) {
-	apiURL := fmt.Sprintf("https://api.nodereleases.com/releases?network=%s&limit=20", network)
+	baseURL := os.Getenv("NODE_RELEASES_API_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api.nodereleases.com"
+	}
+	apiURL := fmt.Sprintf("%s/releases?network=%s&limit=20", baseURL, network)
 	if clientType != "" {
 		apiURL += fmt.Sprintf("&client_type=%s", clientType)
 		agent.logger.Info("Fetching latest release with client type filter", "network", network, "client_type", clientType, "url", apiURL)
@@ -849,8 +894,8 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 		if selectedRelease.Metadata != nil {
 			clientTypeValue = selectedRelease.Metadata.ClientType
 		}
-		agent.logger.Info("Selected release using API client type filter", 
-			"repository", selectedRelease.Repository, 
+		agent.logger.Info("Selected release using API client type filter",
+			"repository", selectedRelease.Repository,
 			"client_type", clientTypeValue,
 			"tag", selectedRelease.Release.TagName)
 	} else {
@@ -861,8 +906,8 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 			for _, release := range releaseResp.Releases {
 				if release.Metadata != nil && strings.EqualFold(release.Metadata.ClientType, preferredType) {
 					selectedRelease = &release
-					agent.logger.Info("Selected release with preferred client type", 
-						"repository", release.Repository, 
+					agent.logger.Info("Selected release with preferred client type",
+						"repository", release.Repository,
 						"client_type", release.Metadata.ClientType,
 						"tag", release.Release.TagName)
 					break
@@ -879,7 +924,7 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 			if selectedRelease.Metadata != nil {
 				fallbackClientType = selectedRelease.Metadata.ClientType
 			}
-			agent.logger.Warn("No preferred client type found, using first available", 
+			agent.logger.Warn("No preferred client type found, using first available",
 				"repository", selectedRelease.Repository,
 				"client_type", fallbackClientType)
 		}

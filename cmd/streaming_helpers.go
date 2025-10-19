@@ -5,8 +5,12 @@ import (
 	"time"
 )
 
+func generateID(prefix string) string {
+	return fmt.Sprintf("%s_%d", prefix, time.Now().UnixNano())
+}
+
 func generateMessageID() string {
-	return fmt.Sprintf("msg_%d", time.Now().UnixNano())
+	return generateID("msg")
 }
 
 func (m *tuiModel) findMessageByID(id string) *ChatMessage {
@@ -36,12 +40,12 @@ func (m *tuiModel) startStreamingMessage(role, initialContent string) string {
 		Timestamp: time.Now(),
 		Actions:   []string{},
 	}
-	
+
 	m.messages = append(m.messages, msg)
 	m.isStreaming = true
 	m.streamingMessageID = messageID
 	m.updateViewportContent()
-	
+
 	return messageID
 }
 

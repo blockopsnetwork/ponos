@@ -27,16 +27,16 @@ const (
 )
 
 type GitHubMCPClient struct {
-	serverURL   string
-	token       string
-	client      *http.Client
-	logger      *slog.Logger
-	sessionID   string
-	appID       string
-	installID   string
-	pemKey      string
-	botName     string
-	
+	serverURL string
+	token     string
+	client    *http.Client
+	logger    *slog.Logger
+	sessionID string
+	appID     string
+	installID string
+	pemKey    string
+	botName   string
+
 	clientName  string
 	userAgent   string
 	cachedToken string
@@ -58,8 +58,8 @@ type MCPResponse struct {
 }
 
 type MCPError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
 	Data    interface{} `json:"data,omitempty"`
 }
 
@@ -73,9 +73,9 @@ func NewGitHubMCPClient(serverURL, token, appID, installID, pemKey, botName stri
 	if botName != "" {
 		clientName = botName
 	}
-	
+
 	userAgent := clientName + "/1.0"
-	
+
 	client := &GitHubMCPClient{
 		serverURL:  serverURL,
 		token:      token,
@@ -88,11 +88,11 @@ func NewGitHubMCPClient(serverURL, token, appID, installID, pemKey, botName stri
 		clientName: clientName,
 		userAgent:  userAgent,
 	}
-	
+
 	if err := client.initialize(); err != nil {
 		logger.Error("failed to initialize MCP session", "error", err)
 	}
-	
+
 	return client
 }
 
@@ -202,7 +202,6 @@ func (g *GitHubMCPClient) GetFileContent(ctx context.Context, owner, repo, path 
 		return "", fmt.Errorf("failed to get file contents: %v", err)
 	}
 
-
 	if contentArray, ok := result["content"].([]interface{}); ok {
 		for _, item := range contentArray {
 			if itemMap, ok := item.(map[string]interface{}); ok {
@@ -220,7 +219,6 @@ func (g *GitHubMCPClient) GetFileContent(ctx context.Context, owner, repo, path 
 	return "", fmt.Errorf("content not found in response")
 }
 
-
 func (g *GitHubMCPClient) CreateBranch(ctx context.Context, owner, repo, branchName string) error {
 	args := map[string]interface{}{
 		"owner":  owner,
@@ -236,7 +234,6 @@ func (g *GitHubMCPClient) CreateBranch(ctx context.Context, owner, repo, branchN
 
 	return nil
 }
-
 
 func (g *GitHubMCPClient) CreateCommit(ctx context.Context, owner, repo, branch, message string, files []FileUpdate) (string, error) {
 	args := map[string]interface{}{
@@ -319,34 +316,33 @@ func (g *GitHubMCPClient) UpdateFile(ctx context.Context, owner, repo, path, con
 	return nil
 }
 
-
 func (g *GitHubMCPClient) createMCPRequest(ctx context.Context, body []byte) (*http.Request, error) {
 	var req *http.Request
 	var err error
-	
+
 	if ctx != nil {
 		req, err = http.NewRequestWithContext(ctx, "POST", g.serverURL, bytes.NewReader(body))
 	} else {
 		req, err = http.NewRequest("POST", g.serverURL, bytes.NewReader(body))
 	}
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request: %v", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", g.userAgent)
-	
+
 	accessToken, err := g.getAccessToken()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get access token: %v", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	
+
 	if g.sessionID != "" {
 		req.Header.Set("Mcp-Session-Id", g.sessionID)
 	}
-	
+
 	return req, nil
 }
 
@@ -390,11 +386,11 @@ func (g *GitHubMCPClient) getAccessToken() (string, error) {
 	if g.token != "" {
 		return g.token, nil
 	}
-	
+
 	if g.hasGitHubAppCredentials() {
 		return g.getCachedOrGenerateToken()
 	}
-	
+
 	return "", fmt.Errorf("no authentication credentials provided")
 }
 
@@ -406,21 +402,21 @@ func (g *GitHubMCPClient) getCachedOrGenerateToken() (string, error) {
 	if g.cachedToken != "" && time.Now().Before(g.tokenExpiry.Add(-tokenRefreshBuffer)) {
 		return g.cachedToken, nil
 	}
-	
+
 	token, err := g.generateInstallationToken()
 	if err != nil {
 		return "", err
 	}
-	
+
 	g.cachedToken = token
 	g.tokenExpiry = time.Now().Add(tokenCacheDuration)
-	
+
 	return token, nil
 }
 
 func (g *GitHubMCPClient) generateInstallationToken() (string, error) {
 	var pemKey string
-	
+
 	if strings.HasPrefix(g.pemKey, "/") || strings.HasPrefix(g.pemKey, "./") || strings.HasSuffix(g.pemKey, ".pem") {
 		pemBytes, err := os.ReadFile(g.pemKey)
 		if err != nil {
@@ -430,12 +426,12 @@ func (g *GitHubMCPClient) generateInstallationToken() (string, error) {
 	} else {
 		pemKey = strings.ReplaceAll(g.pemKey, "\\n", "\n")
 	}
-	
+
 	block, _ := pem.Decode([]byte(pemKey))
 	if block == nil {
 		return "", fmt.Errorf("failed to parse PEM block containing the key - check that PEM key starts with -----BEGIN and ends with -----END")
 	}
-	
+
 	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	if err != nil {
 		parsedKey, err2 := x509.ParsePKCS8PrivateKey(block.Bytes)
@@ -448,53 +444,53 @@ func (g *GitHubMCPClient) generateInstallationToken() (string, error) {
 			return "", fmt.Errorf("parsed key is not an RSA private key")
 		}
 	}
-	
+
 	now := time.Now()
 	claims := jwt.MapClaims{
 		"iat": now.Unix(),
 		"exp": now.Add(jwtMaxDuration).Unix(),
 		"iss": g.appID,
 	}
-	
+
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	jwtToken, err := token.SignedString(privateKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign JWT: %v", err)
 	}
-	
+
 	return g.exchangeJWTForAccessToken(jwtToken)
 }
 
 func (g *GitHubMCPClient) exchangeJWTForAccessToken(jwtToken string) (string, error) {
 	url := fmt.Sprintf("%s/app/installations/%s/access_tokens", githubAPIURL, g.installID)
-	
+
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %v", err)
 	}
-	
+
 	req.Header.Set("Authorization", "Bearer "+jwtToken)
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("User-Agent", g.userAgent)
-	
+
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to exchange JWT: %v", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("failed to get access token (status %d): %s", resp.StatusCode, string(body))
 	}
-	
+
 	var tokenResp struct {
 		Token string `json:"token"`
 	}
-	
+
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		return "", fmt.Errorf("failed to decode token response: %v", err)
 	}
-	
+
 	return tokenResp.Token, nil
 }
