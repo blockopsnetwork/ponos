@@ -13,7 +13,7 @@ import (
 
 const (
 	DeployDashboardCmd = "/deploy-dashboard"
-	DeployAPICmd       = "/deploy-api" 
+	DeployAPICmd       = "/deploy-api"
 	DeployProxyCmd     = "/deploy-proxy"
 	UpdateNetworkCmd   = "/update-network"
 
@@ -65,15 +65,6 @@ type dockerTagResult struct {
 	Error      error
 }
 
-type dockerTag struct {
-	Name        string `json:"name"`
-	LastUpdated string `json:"last_updated"`
-}
-
-type dockerTagsResp struct {
-	Results []dockerTag `json:"results"`
-}
-
 type NetworkUpdateRequest struct {
 	DetectedNetworks []string
 	ReleaseTag       string
@@ -92,13 +83,12 @@ type NetworkUpdateResult struct {
 	Error         error
 }
 
-
 func NewGitHubDeployHandler(bot *Bot) *GitHubDeployHandler {
 	return &GitHubDeployHandler{
 		bot:       bot,
 		mcpClient: bot.mcpClient,
 		docker:    NewDockerOperations(),
-		yaml:     NewYAMLOperations(),
+		yaml:      NewYAMLOperations(),
 		repoConfigs: map[string]RepoConfig{
 			DeployDashboardCmd: {
 				Name:          DashboardRepo,
@@ -107,7 +97,7 @@ func NewGitHubDeployHandler(bot *Bot) *GitHubDeployHandler {
 			},
 			DeployAPICmd: {
 				Name:          APIRepo,
-				DefaultBranch: "main", 
+				DefaultBranch: "main",
 				SourceBranch:  "development",
 			},
 		},
@@ -124,7 +114,7 @@ func (h *GitHubDeployHandler) HandleDeploy(command, text, userID, channelID stri
 	}
 
 	branch := params[0]
-	environment := params[1] 
+	environment := params[1]
 	service := params[2]
 
 	if _, exists := h.repoConfigs[command]; !exists {
@@ -170,7 +160,6 @@ func (h *GitHubDeployHandler) HandleChainUpdate(updateType, text, userID string)
 	}
 }
 
-
 func (h *GitHubDeployHandler) startNetworkUpdate(network, updateType, userID string) {
 	ctx := context.Background()
 
@@ -187,9 +176,9 @@ func (h *GitHubDeployHandler) startNetworkUpdate(network, updateType, userID str
 	}
 
 	payload := ReleasesWebhookPayload{
-		EventType: "manual_update",
-		Username:  userID,
-		Timestamp: time.Now().Format(time.RFC3339),
+		EventType:    "manual_update",
+		Username:     userID,
+		Timestamp:    time.Now().Format(time.RFC3339),
 		Repositories: []Repository{releaseInfo.Repository},
 		Releases: map[string]ReleaseInfo{
 			releaseInfo.Release.TagName: releaseInfo.Release,
@@ -261,7 +250,8 @@ func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req Netwo
 			}
 		}
 	} else {
-		dockerResult, err := h.docker.FetchLatestStableTagsMCP(ctx, h.mcpClient, h.bot.agent, filesToUpdate)
+		primaryNetwork := req.DetectedNetworks[0]
+		dockerResult, err := h.docker.FetchLatestStableTagsMCP(ctx, h.mcpClient, h.bot.agent, filesToUpdate, primaryNetwork, "")
 		if err != nil {
 			return result, err
 		}
@@ -310,18 +300,30 @@ func (h *GitHubDeployHandler) agentUpdatePR(ctx context.Context, payload Release
 	}
 
 	repo := payload.Repositories[0]
-	
+
 	dockerTag := summary.DockerTag
 	if dockerTag == "" || dockerTag == "Not specified" {
-		dockerTag = repo.ReleaseTag
-		h.bot.logger.Warn("llm unable to infer docker tag, using GitHub release tag", "github_tag", repo.ReleaseTag)
+		if repo.DockerTag != "" {
+			h.bot.logger.Info("Using docker tag from release metadata", "docker_tag", repo.DockerTag)
+			dockerTag = repo.DockerTag
+		} else {
+			dockerTag = repo.ReleaseTag
+			h.bot.logger.Warn("llm unable to infer docker tag, using GitHub release tag", "github_tag", repo.ReleaseTag)
+		}
 	}
 
-	title, body, commitMessage := BuildPRContent(repo.NetworkName, dockerTag, h.mcpClient.botName, summary)
+	var releaseDetails *ReleaseInfo
+	for _, rel := range payload.Releases {
+		releaseCopy := rel
+		releaseDetails = &releaseCopy
+		break
+	}
+
+	title, body, commitMessage := BuildPRContent(repo.NetworkName, dockerTag, h.mcpClient.botName, summary, releaseDetails)
 
 	req := NetworkUpdateRequest{
 		DetectedNetworks: []string{strings.ToLower(repo.NetworkName)},
-		ReleaseTag:       dockerTag, 
+		ReleaseTag:       dockerTag,
 		CommitMessage:    commitMessage,
 		PRTitle:          title,
 		PRBody:           body,
@@ -342,7 +344,6 @@ func (h *GitHubDeployHandler) notifyError(channelID, message string) {
 		h.bot.logger.Error("failed to send error message", "error", err, "channel", channelID, "message", message)
 	}
 }
-
 
 func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesToUpdate []fileInfo, imageToTag map[string]string) ([]fileCommitData, []imageUpgrade, error) {
 	var filesToCommit []fileCommitData
@@ -438,7 +439,7 @@ func (h *GitHubDeployHandler) extractImageReposWithLLM(ctx context.Context, yaml
 			h.bot.logger.Info("LLM found no blockchain containers, falling back to pattern matching")
 		}
 	}
-	
+
 	h.bot.logger.Info("Using pattern matching for image extraction")
 	return h.yaml.ExtractImageReposFromYAML(yamlContent)
 }

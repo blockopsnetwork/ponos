@@ -14,6 +14,15 @@ import (
 	"time"
 )
 
+func getStringFromMap(m map[string]interface{}, key string) string {
+	if val, ok := m[key]; ok && val != nil {
+		if str, ok := val.(string); ok {
+			return str
+		}
+	}
+	return ""
+}
+
 type NodeOperatorAgent struct {
 	logger       *slog.Logger
 	agentCoreURL string
@@ -34,7 +43,6 @@ type AgentSummary struct {
 	Error               string   `json:"error,omitempty"`
 }
 
-
 type NetworkReleaseInfo struct {
 	Network    string      `json:"network"`
 	Repository Repository  `json:"repository"`
@@ -43,34 +51,34 @@ type NetworkReleaseInfo struct {
 
 type InfrastructureContext struct {
 	DetectedClients    []DetectedClient `json:"detected_clients"`
-	DeploymentType     string          `json:"deployment_type"`
-	NetworkEnvironment string          `json:"network_environment"`
-	ConfiguredImages   []string        `json:"configured_images"`
-	Confidence         string          `json:"confidence"`
+	DeploymentType     string           `json:"deployment_type"`
+	NetworkEnvironment string           `json:"network_environment"`
+	ConfiguredImages   []string         `json:"configured_images"`
+	Confidence         string           `json:"confidence"`
 }
 
 type DetectedClient struct {
-	Repository   string `json:"repository"`
-	CurrentTag   string `json:"current_tag"`
-	ClientType   string `json:"client_type"`
-	DockerImage  string `json:"docker_image"`
-	FilePath     string `json:"file_path"`
-	NetworkName  string `json:"network_name"`
+	Repository  string `json:"repository"`
+	CurrentTag  string `json:"current_tag"`
+	ClientType  string `json:"client_type"`
+	DockerImage string `json:"docker_image"`
+	FilePath    string `json:"file_path"`
+	NetworkName string `json:"network_name"`
 }
 
 type EnhancedUpgradeRequest struct {
-	UserMessage        string                  `json:"user_message"`
-	Intent            *UpgradeIntent          `json:"intent"`
-	Infrastructure    *InfrastructureContext  `json:"infrastructure"`
-	NeedsClarification bool                   `json:"needs_clarification"`
-	ClarificationPrompt string                `json:"clarification_prompt,omitempty"`
-	TargetClientType   string                `json:"target_client_type,omitempty"`
+	UserMessage         string                 `json:"user_message"`
+	Intent              *UpgradeIntent         `json:"intent"`
+	Infrastructure      *InfrastructureContext `json:"infrastructure"`
+	NeedsClarification  bool                   `json:"needs_clarification"`
+	ClarificationPrompt string                 `json:"clarification_prompt,omitempty"`
+	TargetClientType    string                 `json:"target_client_type,omitempty"`
 }
 
 func NewNodeOperatorAgent(logger *slog.Logger) (*NodeOperatorAgent, error) {
 	agentCoreURL := os.Getenv("AGENT_CORE_URL")
 	if agentCoreURL == "" {
-		agentCoreURL = "http://localhost:8001" 
+		agentCoreURL = "http://localhost:8001"
 	}
 
 	agent := &NodeOperatorAgent{
@@ -207,7 +215,6 @@ func (agent *NodeOperatorAgent) callAgentCore(ctx context.Context, prompt string
 	return content, nil
 }
 
-
 func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Reader, updates chan<- StreamingUpdate) error {
 	scanner := bufio.NewScanner(body)
 	var assistantMessageID string
@@ -272,7 +279,7 @@ func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Read
 		case "assistant":
 			agent.logger.Info("Stream assistant response", "message", message)
 			if assistantMessageID == "" {
-				assistantMessageID = fmt.Sprintf("msg_%d", time.Now().UnixNano())
+				assistantMessageID = generateID("msg")
 				updates <- StreamingUpdate{
 					Type:        "assistant",
 					Message:     message,
@@ -292,6 +299,32 @@ func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Read
 			updates <- StreamingUpdate{
 				Type:    "status",
 				Message: message,
+			}
+
+		case "todo_update":
+			agent.logger.Info("Stream TODO update", "message", message)
+
+			var todos []TodoItem
+			if todosInterface, ok := streamEvent["todos"].([]interface{}); ok {
+				for _, todoInterface := range todosInterface {
+					if todoMap, ok := todoInterface.(map[string]interface{}); ok {
+						todo := TodoItem{
+							Content:    getStringFromMap(todoMap, "content"),
+							Status:     getStringFromMap(todoMap, "status"),
+							ActiveForm: getStringFromMap(todoMap, "activeForm"),
+						}
+						todos = append(todos, todo)
+					}
+				}
+			}
+
+			toolName, _ := streamEvent["tool_name"].(string)
+
+			updates <- StreamingUpdate{
+				Type:     "todo_update",
+				Message:  message,
+				Todos:    todos,
+				ToolName: toolName,
 			}
 
 		case "complete":
@@ -408,19 +441,26 @@ func (agent *NodeOperatorAgent) parseYAMLAnalysisResponse(response string) []str
 	return repos
 }
 
-
 type StreamingUpdate struct {
-	Type         string // "thinking", "tool_start", "tool_result", "assistant", "complete", "stream_append"
+	Type         string // "thinking", "tool_start", "tool_result", "assistant", "complete", "stream_append", "todo_update"
 	Message      string
 	Tool         string
 	Success      bool
 	Summary      string // Detailed results or error information from tool execution
-	SessionID    string 
-	CheckpointID string 
-	MessageID    string 
-	IsAppending  bool  
+	SessionID    string
+	CheckpointID string
+	MessageID    string
+	IsAppending  bool
+
+	Todos    []TodoItem `json:"todos,omitempty"`
+	ToolName string     `json:"tool_name,omitempty"`
 }
 
+type TodoItem struct {
+	Content    string `json:"content"`
+	Status     string `json:"status"` // pending, in_progress, completed
+	ActiveForm string `json:"active_form"`
+}
 
 func (agent *NodeOperatorAgent) ProcessConversationWithStreaming(ctx context.Context, userMessage string, updates chan<- StreamingUpdate) error {
 	agent.logger.Info("ProcessConversationWithStreaming called", "message", userMessage)
@@ -539,7 +579,6 @@ func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreamingAndHist
 	return agent.processStreamingResponseWithUpdates(resp.Body, updates)
 }
 
-
 func (agent *NodeOperatorAgent) ParseUpgradeIntent(ctx context.Context, userMessage string) (*UpgradeIntent, error) {
 	prompt := fmt.Sprintf(`Analyze this user message to determine what action they want.
 
@@ -613,9 +652,9 @@ func (agent *NodeOperatorAgent) parseUpgradeIntentResponse(response string) *Upg
 	}
 
 	userMessage := strings.ToLower(response)
-	if strings.Contains(userMessage, "ethereum") || strings.Contains(userMessage, "geth") || 
-	   strings.Contains(userMessage, "lighthouse") || strings.Contains(userMessage, "reth") ||
-	   strings.Contains(userMessage, "besu") {
+	if strings.Contains(userMessage, "ethereum") || strings.Contains(userMessage, "geth") ||
+		strings.Contains(userMessage, "lighthouse") || strings.Contains(userMessage, "reth") ||
+		strings.Contains(userMessage, "besu") {
 		intent.Network = "ethereum"
 		intent.RequiresAction = true
 		intent.ActionType = "upgrade"
@@ -650,12 +689,12 @@ func (agent *NodeOperatorAgent) AnalyzeUpgradeRequestWithContext(ctx context.Con
 
 	infrastructure := &InfrastructureContext{
 		DetectedClients: []DetectedClient{},
-		Confidence:     "dynamic", 
+		Confidence:      "dynamic",
 	}
 
 	request := &EnhancedUpgradeRequest{
 		UserMessage:    userMessage,
-		Intent:        intent,
+		Intent:         intent,
 		Infrastructure: infrastructure,
 	}
 
@@ -667,10 +706,9 @@ func (agent *NodeOperatorAgent) AnalyzeUpgradeRequestWithContext(ctx context.Con
 	}
 
 	request.TargetClientType = agent.determineTargetClientType(request)
-	
+
 	return request, nil
 }
-
 
 func (agent *NodeOperatorAgent) determineIfClarificationNeeded(request *EnhancedUpgradeRequest) string {
 	if request.Intent.Network == "unknown" && len(request.Infrastructure.DetectedClients) > 1 {
@@ -685,7 +723,7 @@ func (agent *NodeOperatorAgent) determineIfClarificationNeeded(request *Enhanced
 		return agent.buildGeneralClarificationPrompt(request)
 	}
 
-	return "" 
+	return ""
 }
 
 func (agent *NodeOperatorAgent) getClientsForNetwork(request *EnhancedUpgradeRequest, network string) []DetectedClient {
@@ -724,7 +762,7 @@ func (agent *NodeOperatorAgent) buildClientTypeClarificationPrompt(request *Enha
 
 	prompt := fmt.Sprintf("I found multiple %s clients in your setup:\n\n", strings.Title(network))
 	for _, client := range clients {
-		prompt += fmt.Sprintf("- **%s** (%s client, currently %s) in %s\n", 
+		prompt += fmt.Sprintf("- **%s** (%s client, currently %s) in %s\n",
 			client.Repository, client.ClientType, client.CurrentTag, client.FilePath)
 	}
 
@@ -766,7 +804,7 @@ func (agent *NodeOperatorAgent) determineTargetClientType(request *EnhancedUpgra
 		}
 	}
 
-	return "" 
+	return ""
 }
 
 func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, network string) (*NetworkReleaseInfo, error) {
@@ -774,58 +812,22 @@ func (agent *NodeOperatorAgent) GetLatestNetworkRelease(ctx context.Context, net
 }
 
 func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx context.Context, network, clientType string) (*NetworkReleaseInfo, error) {
-	apiURL := fmt.Sprintf("https://api.nodereleases.com/releases?network=%s&limit=20", network)
-	if clientType != "" {
-		apiURL += fmt.Sprintf("&client_type=%s", clientType)
-		agent.logger.Info("Fetching latest release with client type filter", "network", network, "client_type", clientType, "url", apiURL)
-	} else {
-		agent.logger.Info("Fetching latest release without client type filter", "network", network, "url", apiURL)
+	baseURL := os.Getenv("NODE_RELEASES_API_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api.nodereleases.com"
 	}
 
-	resp, err := http.Get(apiURL)
-	if err != nil {
-		agent.logger.Error("Failed to fetch release data", "error", err, "network", network)
-		return nil, fmt.Errorf("failed to fetch release data: %w", err)
-	}
-	defer resp.Body.Close()
+	requestedClientType := strings.ToLower(clientType)
 
-	if resp.StatusCode != http.StatusOK {
-		agent.logger.Error("API returned non-200 status", "status", resp.StatusCode, "network", network)
-		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	type releaseMetadata struct {
+		ClientType   string `json:"client_type"`
+		NetworkName  string `json:"network_name"`
+		DisplayName  string `json:"display_name"`
+		DockerRepo   string `json:"docker_repo"`
+		DockerHubTag string `json:"dockerhub_tag"`
 	}
 
-	var releaseResp struct {
-		Releases []struct {
-			Repository string `json:"repository"`
-			Release    *struct {
-				TagName     string `json:"tag_name"`
-				Name        string `json:"name"`
-				Body        string `json:"body"`
-				HTMLURL     string `json:"html_url"`
-				PublishedAt string `json:"published_at"`
-				Prerelease  bool   `json:"prerelease"`
-				Draft       bool   `json:"draft"`
-			} `json:"release"`
-			Metadata *struct {
-				ClientType  string `json:"client_type"`
-				NetworkName string `json:"network_name"`
-				DisplayName string `json:"display_name"`
-			} `json:"metadata"`
-		} `json:"releases"`
-		Total int `json:"total"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&releaseResp); err != nil {
-		agent.logger.Error("Failed to decode API response", "error", err, "network", network)
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if len(releaseResp.Releases) == 0 {
-		agent.logger.Warn("No releases found for network", "network", network, "client_type", clientType)
-		return nil, fmt.Errorf("no releases found for network: %s with client_type: %s", network, clientType)
-	}
-
-	var selectedRelease *struct {
+	type releaseRecord struct {
 		Repository string `json:"repository"`
 		Release    *struct {
 			TagName     string `json:"tag_name"`
@@ -836,56 +838,138 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 			Prerelease  bool   `json:"prerelease"`
 			Draft       bool   `json:"draft"`
 		} `json:"release"`
-		Metadata *struct {
-			ClientType  string `json:"client_type"`
-			NetworkName string `json:"network_name"`
-			DisplayName string `json:"display_name"`
-		} `json:"metadata"`
+		Metadata *releaseMetadata `json:"metadata"`
 	}
 
-	if clientType != "" {
-		selectedRelease = &releaseResp.Releases[0]
-		clientTypeValue := "unknown"
-		if selectedRelease.Metadata != nil {
-			clientTypeValue = selectedRelease.Metadata.ClientType
-		}
-		agent.logger.Info("Selected release using API client type filter", 
-			"repository", selectedRelease.Repository, 
-			"client_type", clientTypeValue,
-			"tag", selectedRelease.Release.TagName)
-	} else {
-		preferredClientTypes := agent.getPreferredClientTypes(network)
-		agent.logger.Info("Looking for preferred client types", "network", network, "types", preferredClientTypes)
+	var releaseResp struct {
+		Releases []releaseRecord `json:"releases"`
+		Total    int             `json:"total"`
+	}
 
-		for _, preferredType := range preferredClientTypes {
-			for _, release := range releaseResp.Releases {
-				if release.Metadata != nil && strings.EqualFold(release.Metadata.ClientType, preferredType) {
-					selectedRelease = &release
-					agent.logger.Info("Selected release with preferred client type", 
-						"repository", release.Repository, 
-						"client_type", release.Metadata.ClientType,
-						"tag", release.Release.TagName)
-					break
-				}
+	for attempt := 0; attempt < 2; attempt++ {
+		apiURL := fmt.Sprintf("%s/releases?network=%s&limit=20", baseURL, network)
+		if attempt == 0 && requestedClientType != "" {
+			apiURL += fmt.Sprintf("&client_type=%s&client=%s", requestedClientType, requestedClientType)
+			agent.logger.Info("Fetching latest release with client type filter", "network", network, "client_type", requestedClientType, "url", apiURL)
+		} else {
+			agent.logger.Info("Fetching latest release without client type filter", "network", network, "url", apiURL)
+		}
+
+		resp, err := http.Get(apiURL)
+		if err != nil {
+			agent.logger.Error("Failed to fetch release data", "error", err, "network", network)
+			return nil, fmt.Errorf("failed to fetch release data: %w", err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			agent.logger.Error("Failed to read release response body", "error", err)
+			return nil, fmt.Errorf("failed to read response body: %w", err)
+		}
+
+		releaseResp = struct {
+			Releases []releaseRecord `json:"releases"`
+			Total    int             `json:"total"`
+		}{}
+
+		if err := json.Unmarshal(body, &releaseResp); err != nil {
+			agent.logger.Error("Failed to decode API response", "error", err, "network", network, "body", string(body))
+			return nil, fmt.Errorf("failed to decode response: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			agent.logger.Error("API returned non-200 status", "status", resp.StatusCode, "network", network, "body", string(body))
+			return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+		}
+
+		if len(releaseResp.Releases) == 0 && attempt == 0 && requestedClientType != "" {
+			agent.logger.Warn("No releases found for client type filter, retrying without filter", "network", network, "client_type", requestedClientType)
+			continue
+		}
+
+		break
+	}
+
+	if len(releaseResp.Releases) == 0 {
+		agent.logger.Warn("No releases found for network", "network", network, "client_type", clientType)
+		return nil, fmt.Errorf("no releases found for network: %s with client_type: %s", network, clientType)
+	}
+
+	preferredRepos := agent.getDeploymentRepositories(ctx, network)
+	preferredRepoSet := make(map[string]struct{}, len(preferredRepos))
+	for _, repo := range preferredRepos {
+		for _, candidate := range normalizedRepoCandidates(repo) {
+			if candidate != "" {
+				preferredRepoSet[candidate] = struct{}{}
 			}
-			if selectedRelease != nil {
+		}
+	}
+
+	preferredClientTypes := agent.getPreferredClientTypes(network)
+
+	selectedRelease := &releaseResp.Releases[0]
+	bestScore := -1
+
+	for i := range releaseResp.Releases {
+		rel := &releaseResp.Releases[i]
+		metadataRepo := ""
+		metadataClientType := ""
+		if rel.Metadata != nil {
+			metadataRepo = rel.Metadata.DockerRepo
+			metadataClientType = rel.Metadata.ClientType
+		}
+
+		repoMatch := false
+		for _, candidate := range normalizedRepoCandidates(metadataRepo) {
+			if _, ok := preferredRepoSet[candidate]; ok {
+				repoMatch = true
 				break
 			}
 		}
-
-		if selectedRelease == nil {
-			selectedRelease = &releaseResp.Releases[0]
-			fallbackClientType := "unknown"
-			if selectedRelease.Metadata != nil {
-				fallbackClientType = selectedRelease.Metadata.ClientType
+		if !repoMatch {
+			for _, candidate := range normalizedRepoCandidates(rel.Repository) {
+				if _, ok := preferredRepoSet[candidate]; ok {
+					repoMatch = true
+					break
+				}
 			}
-			agent.logger.Warn("No preferred client type found, using first available", 
-				"repository", selectedRelease.Repository,
-				"client_type", fallbackClientType)
+		}
+
+		clientMatch := requestedClientType != "" && strings.EqualFold(metadataClientType, requestedClientType)
+		preferredMatch := false
+		if requestedClientType == "" {
+			for _, pref := range preferredClientTypes {
+				if strings.EqualFold(metadataClientType, pref) {
+					preferredMatch = true
+					break
+				}
+			}
+		}
+
+		score := 0
+		if repoMatch {
+			score += 4
+		}
+		if clientMatch {
+			score += 2
+		} else if preferredMatch {
+			score += 1
+		}
+
+		if score > bestScore {
+			bestScore = score
+			selectedRelease = rel
 		}
 	}
 
-	if selectedRelease.Release == nil {
+	if bestScore <= 0 && requestedClientType != "" {
+		agent.logger.Warn("No strong match found; falling back to first release for requested client",
+			"network", network,
+			"client_type", requestedClientType)
+	}
+
+	if selectedRelease == nil || selectedRelease.Release == nil {
 		return nil, fmt.Errorf("release data is nil for network: %s", network)
 	}
 
@@ -894,15 +978,28 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 		return nil, fmt.Errorf("invalid repository format: %s", selectedRelease.Repository)
 	}
 
+	var displayName, networkName, metadataClientType, dockerTag string
+	if selectedRelease.Metadata != nil {
+		displayName = selectedRelease.Metadata.DisplayName
+		networkName = selectedRelease.Metadata.NetworkName
+		metadataClientType = selectedRelease.Metadata.ClientType
+		dockerTag = selectedRelease.Metadata.DockerHubTag
+	}
+
+	if dockerTag == "" {
+		dockerTag = selectedRelease.Release.TagName
+	}
+
 	return &NetworkReleaseInfo{
 		Network: network,
 		Repository: Repository{
 			Owner:       repoParts[0],
 			Name:        repoParts[1],
-			DisplayName: selectedRelease.Metadata.DisplayName,
-			NetworkName: selectedRelease.Metadata.NetworkName,
-			ClientType:  selectedRelease.Metadata.ClientType,
+			DisplayName: displayName,
+			NetworkName: networkName,
+			ClientType:  metadataClientType,
 			ReleaseTag:  selectedRelease.Release.TagName,
+			DockerTag:   dockerTag,
 		},
 		Release: ReleaseInfo{
 			TagName:     selectedRelease.Release.TagName,
@@ -916,12 +1013,117 @@ func (agent *NodeOperatorAgent) GetLatestNetworkReleaseWithClientType(ctx contex
 	}, nil
 }
 
+func (agent *NodeOperatorAgent) getDeploymentRepositories(ctx context.Context, network string) []string {
+	endpoint := fmt.Sprintf("%s/tools/analyze_current_deployment", agent.agentCoreURL)
+	payload := map[string]string{"network": network}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		agent.logger.Warn("Failed to marshal deployment analysis payload", "error", err)
+		return nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
+	if err != nil {
+		agent.logger.Warn("Failed to create deployment analysis request", "error", err)
+		return nil
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := agent.httpClient.Do(req)
+	if err != nil {
+		agent.logger.Warn("Deployment analysis request failed", "error", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		agent.logger.Warn("Deployment analysis returned non-200", "status", resp.StatusCode)
+		return nil
+	}
+
+	var result struct {
+		Success  bool `json:"success"`
+		Analysis struct {
+			Clients map[string]struct {
+				Repo string `json:"repo"`
+			} `json:"clients"`
+		} `json:"analysis"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		agent.logger.Warn("Failed to decode deployment analysis response", "error", err)
+		return nil
+	}
+
+	if !result.Success {
+		agent.logger.Warn("Deployment analysis reported failure", "network", network)
+		return nil
+	}
+
+	repoSet := make(map[string]struct{})
+	for _, client := range result.Analysis.Clients {
+		repo := strings.TrimSpace(client.Repo)
+		if repo != "" && !strings.EqualFold(repo, "unknown") {
+			if _, exists := repoSet[repo]; !exists {
+				repoSet[repo] = struct{}{}
+			}
+		}
+	}
+	repos := make([]string, 0, len(repoSet))
+	for repo := range repoSet {
+		repos = append(repos, repo)
+	}
+	return repos
+}
+
+func normalizedRepoCandidates(repo string) []string {
+	repo = strings.TrimSpace(strings.ToLower(repo))
+	if repo == "" {
+		return nil
+	}
+	if strings.HasPrefix(repo, "docker.io/") {
+		repo = strings.TrimPrefix(repo, "docker.io/")
+	}
+	if strings.HasPrefix(repo, "ghcr.io/") {
+		repo = strings.TrimPrefix(repo, "ghcr.io/")
+	}
+	repo = strings.TrimSuffix(repo, ":latest")
+	if idx := strings.Index(repo, "@"); idx != -1 {
+		repo = repo[:idx]
+	}
+	if idx := strings.Index(repo, ":"); idx != -1 {
+		repo = repo[:idx]
+	}
+	if repo == "" {
+		return nil
+	}
+
+	candidates := []string{repo}
+	if parts := strings.Split(repo, "/"); len(parts) > 1 {
+		name := parts[len(parts)-1]
+		if name != "" {
+			candidates = append(candidates, name)
+		}
+	}
+
+	unique := make(map[string]struct{}, len(candidates))
+	result := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, exists := unique[candidate]; !exists {
+			unique[candidate] = struct{}{}
+			result = append(result, candidate)
+		}
+	}
+	return result
+}
+
 func (agent *NodeOperatorAgent) getPreferredClientTypes(network string) []string {
 	switch strings.ToLower(network) {
 	case "ethereum":
 		return []string{"execution", "node", "consensus"}
 	case "polkadot", "kusama":
-		return []string{"node", "parachain"}
+		return []string{"archive", "validator", "full", "rpc", "node", "parachain"}
 	case "solana":
 		return []string{"validator", "node"}
 	default:

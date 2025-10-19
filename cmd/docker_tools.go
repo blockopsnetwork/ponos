@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
-	"sort"
+	"net/url"
+	"os"
 	"strings"
 )
 
@@ -16,8 +16,7 @@ func NewDockerOperations() *DockerOperations {
 	return &DockerOperations{}
 }
 
-
-func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClient *GitHubMCPClient, agent *NodeOperatorAgent, filesToUpdate []fileInfo) (*dockerTagResult, error) {
+func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClient *GitHubMCPClient, agent *NodeOperatorAgent, filesToUpdate []fileInfo, network, client string) (*dockerTagResult, error) {
 	imageToTag := make(map[string]string)
 
 	for _, f := range filesToUpdate {
@@ -32,14 +31,7 @@ func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClie
 	}
 
 	for img := range imageToTag {
-		parts := strings.Split(img, "/")
-		if len(parts) != 2 {
-			continue
-		}
-		namespace := parts[0]
-		repo := parts[1]
-
-		tag, err := d.fetchLatestStableTag(namespace, repo)
+		tag, err := d.fetchLatestTagFromNodeReleases(network, client)
 		if err != nil {
 			continue
 		}
@@ -49,72 +41,66 @@ func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClie
 	return &dockerTagResult{ImageToTag: imageToTag}, nil
 }
 
-func (d *DockerOperations) fetchLatestStableTag(namespace, repo string) (string, error) {
-	url := fmt.Sprintf("https://hub.docker.com/v2/repositories/%s/%s/tags/?page_size=100", namespace, repo)
-	
-	resp, err := http.Get(url)
+func (d *DockerOperations) fetchLatestTagFromNodeReleases(network, client string) (string, error) {
+	baseURL := os.Getenv("NODE_RELEASES_API_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api.nodereleases.com"
+	}
+
+	releasesURL, err := url.Parse(strings.TrimRight(baseURL, "/") + "/releases")
+	if err != nil {
+		return "", fmt.Errorf("invalid NODE_RELEASES_API_BASE_URL %q: %w", baseURL, err)
+	}
+
+	query := releasesURL.Query()
+	query.Set("network", strings.ToLower(network))
+	if client != "" {
+		query.Set("client_type", strings.ToLower(client))
+	}
+	releasesURL.RawQuery = query.Encode()
+
+	resp, err := http.Get(releasesURL.String())
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("docker hub API returned status %d", resp.StatusCode)
+		return "", fmt.Errorf("node-releases API returned status %d", resp.StatusCode)
 	}
 
-	var tagsResp dockerTagsResp
-	if err := json.NewDecoder(resp.Body).Decode(&tagsResp); err != nil {
+	var apiResp struct {
+		Releases []struct {
+			Repository string `json:"repository"`
+			Metadata   struct {
+				DockerRepo   string `json:"docker_repo"`
+				DockerHubTag string `json:"dockerhub_tag"`
+			} `json:"metadata"`
+		} `json:"releases"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
 		return "", err
 	}
 
-	stableTagPattern := regexp.MustCompile(`^stable\d+(-\d+)*$`)
-	var stableTags []string
+	if len(apiResp.Releases) == 0 {
+		if client != "" {
+			return d.fetchLatestTagFromNodeReleases(network, "")
+		}
+		return "", fmt.Errorf("node-releases API returned no releases for network=%s", network)
+	}
 
-	for _, tag := range tagsResp.Results {
-		if stableTagPattern.MatchString(tag.Name) {
-			stableTags = append(stableTags, tag.Name)
+	for _, release := range apiResp.Releases {
+		if release.Metadata.DockerHubTag != "" {
+			return release.Metadata.DockerHubTag, nil
 		}
 	}
 
-	if len(stableTags) == 0 {
-		return "", fmt.Errorf("no stable tags found for %s/%s", namespace, repo)
+	if client != "" {
+		return d.fetchLatestTagFromNodeReleases(network, "")
 	}
 
-	sort.Slice(stableTags, func(i, j int) bool {
-		return d.compareStableTags(stableTags[i], stableTags[j])
-	})
-
-	return stableTags[len(stableTags)-1], nil
-}
-
-func (d *DockerOperations) compareStableTags(tag1, tag2 string) bool {
-	extract := func(tag string) []int {
-		re := regexp.MustCompile(`\d+`)
-		matches := re.FindAllString(tag, -1)
-		var nums []int
-		for _, match := range matches {
-			var num int
-			fmt.Sscanf(match, "%d", &num)
-			nums = append(nums, num)
-		}
-		return nums
-	}
-
-	nums1 := extract(tag1)
-	nums2 := extract(tag2)
-
-	minLen := len(nums1)
-	if len(nums2) < minLen {
-		minLen = len(nums2)
-	}
-
-	for i := 0; i < minLen; i++ {
-		if nums1[i] != nums2[i] {
-			return nums1[i] < nums2[i]
-		}
-	}
-
-	return len(nums1) < len(nums2)
+	return "", fmt.Errorf("docker tag not found for network=%s client=%s", network, client)
 }
 
 func (d *DockerOperations) extractImageReposWithLLM(ctx context.Context, agent *NodeOperatorAgent, yamlContent string) []string {
@@ -123,7 +109,7 @@ func (d *DockerOperations) extractImageReposWithLLM(ctx context.Context, agent *
 			return llmRepos
 		}
 	}
-	
+
 	yamlOps := NewYAMLOperations()
 	return yamlOps.ExtractImageReposFromYAML(yamlContent)
 }

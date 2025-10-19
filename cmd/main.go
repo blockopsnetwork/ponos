@@ -34,6 +34,7 @@ type Repository struct {
 	NetworkKey  string `json:"network_key"`
 	NetworkName string `json:"network_name"`
 	ReleaseTag  string `json:"release_tag"`
+	DockerTag   string `json:"docker_tag"`
 	ClientType  string `json:"client_type"`
 }
 
@@ -76,7 +77,7 @@ func runServer() {
 		logger.Error("failed to load configuration", "error", err)
 		os.Exit(1)
 	}
-	
+
 	// Validate GitHub bot configurationac
 	if err := cfg.ValidateGitHubBotConfig(); err != nil {
 		logger.Error("GitHub bot configuration error", "error", err)
@@ -163,7 +164,7 @@ func runAgentTUI() {
 		logger.Error("failed to load configuration", "error", err)
 		os.Exit(1)
 	}
-	
+
 	if err := cfg.ValidateGitHubBotConfig(); err != nil {
 		fmt.Fprintf(os.Stderr, "GitHub configuration error: %v\n", err)
 		fmt.Fprintf(os.Stderr, "\nRequired environment variables:\n")
@@ -389,7 +390,7 @@ func (b *Bot) handleGitHubMCP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-	
+
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
 		return
