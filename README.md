@@ -42,6 +42,7 @@ docker run -d \
   -e GITHUB_INSTALL_ID=<your-github-installation-id> \
   -e GITHUB_PEM_KEY=/app/gh.pem \
   -e SLACK_BOT_TOKEN=<your-slack-bot-token> \
+  -e AGENT_CORE_URL=<http://agent-core-host:8001> \
   -v $(pwd)/gh.pem:/app/gh.pem \
   ponos
 ```
@@ -52,6 +53,7 @@ The bot responds to the following slash commands in Slack:
 
 - `/deploy-dashboard` - Deploy the dashboard service
 - `/deploy-api` - Deploy the API service
+- `/diagnose <service>` - Run diagnostics via agent-core MCP workflow
 
 more soon
 # nai-agent-core

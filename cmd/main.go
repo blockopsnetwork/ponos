@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -55,6 +56,22 @@ type Bot struct {
 	mcpClient     *GitHubMCPClient
 	agent         *NodeOperatorAgent
 	githubHandler *GitHubDeployHandler
+}
+
+type DiagnosticsResponse struct {
+	Success bool              `json:"success"`
+	Result  DiagnosticsResult `json:"result"`
+	Error   string            `json:"error,omitempty"`
+}
+
+type DiagnosticsResult struct {
+	Service     string                 `json:"service"`
+	Prompt      string                 `json:"prompt"`
+	IssueURL    string                 `json:"issue_url"`
+	SlackResult map[string]interface{} `json:"slack_result"`
+	Channel     string                 `json:"slack_channel"`
+	IssueNumber int                    `json:"issue_number"`
+	LogSnippet  string                 `json:"log_snippet"`
 }
 
 func main() {
@@ -369,6 +386,8 @@ func (b *Bot) handleSlashCommand(w http.ResponseWriter, r *http.Request) {
 		response = b.githubHandler.HandleDeploy(command, text, userID, channelID)
 	case UpdateNetworkCmd:
 		response = b.githubHandler.HandleChainUpdate("network", text, userID)
+	case "/diagnose":
+		response = b.handleDiagnosticsCommand(text, userID, channelID)
 	default:
 		response = &SlashCommandResponse{
 			ResponseType: "ephemeral",
@@ -493,4 +512,106 @@ func (b *Bot) sendReleaseSummaryFromAgent(channel string, payload ReleasesWebhoo
 			"channel", channel,
 			"summary", summary)
 	}
+}
+func (b *Bot) handleDiagnosticsCommand(text, userID, channelID string) *SlashCommandResponse {
+	service := strings.TrimSpace(text)
+	if service == "" {
+		return &SlashCommandResponse{
+			ResponseType: "ephemeral",
+			Text:         "Usage: /diagnose <service-name>",
+		}
+	}
+
+	if b.config.AgentCoreURL == "" {
+		b.logger.Error("Agent core URL is not configured")
+		return &SlashCommandResponse{
+			ResponseType: "ephemeral",
+			Text:         "Agent-core URL is not configured. Please set AGENT_CORE_URL.",
+		}
+	}
+
+	response := &SlashCommandResponse{
+		ResponseType: "in_channel",
+		Text:         fmt.Sprintf(":mag: Running diagnostics for *%s*...", service),
+	}
+
+	go func() {
+		if err := b.triggerDiagnostics(service, channelID); err != nil {
+			b.logger.Error("Diagnostics failed", "service", service, "error", err)
+		}
+	}()
+
+	return response
+}
+
+func (b *Bot) triggerDiagnostics(service, channelID string) error {
+	payload := map[string]string{
+		"service": service,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal diagnostics payload: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/diagnostics/run", b.config.AgentCoreURL)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create diagnostics request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("diagnostics request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("agent-core returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var diagResp DiagnosticsResponse
+
+	if err := json.NewDecoder(resp.Body).Decode(&diagResp); err != nil {
+		return fmt.Errorf("failed to decode diagnostics response: %w", err)
+	}
+
+	if !diagResp.Success {
+		return fmt.Errorf("diagnostics service reported failure: %s", diagResp.Error)
+	}
+
+	messageBuilder := strings.Builder{}
+	messageBuilder.WriteString(fmt.Sprintf(":white_check_mark: Diagnostics completed for *%s*.\n", service))
+	if diagResp.Result.IssueURL != "" {
+		messageBuilder.WriteString(fmt.Sprintf("• GitHub issue: %s\n", diagResp.Result.IssueURL))
+	}
+	if diagResp.Result.LogSnippet != "" {
+		messageBuilder.WriteString("• Log snapshot:\n")
+		messageBuilder.WriteString("```\n")
+		messageBuilder.WriteString(diagResp.Result.LogSnippet)
+		messageBuilder.WriteString("\n```\n")
+	}
+	if diagResp.Result.ResourceDescription != "" {
+		messageBuilder.WriteString("• Resource description added to GitHub issue.\n")
+	}
+	if diagResp.Result.EventsSummary != "" {
+		messageBuilder.WriteString("• Recent events captured in diagnostics issue.\n")
+	}
+	messageBuilder.WriteString("• Prompt:\n")
+	messageBuilder.WriteString("```")
+	messageBuilder.WriteString(diagResp.Result.Prompt)
+	messageBuilder.WriteString("```")
+
+	message := messageBuilder.String()
+
+	if _, _, err := b.client.PostMessage(
+		channelID,
+		slack.MsgOptionText(message, false),
+	); err != nil {
+		b.logger.Error("Failed to post diagnostics result to Slack", "error", err)
+	}
+
+	return nil
 }
