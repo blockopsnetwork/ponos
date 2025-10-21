@@ -19,6 +19,8 @@ type Config struct {
 	SlackSigningKey    string `envconfig:"SLACK_SIGNING_SECRET" default:""`
 	SlackUpdateChannel string `envconfig:"SLACK_UPDATE_CHANNEL" default:"sre-tasks"`
 
+	AgentCoreURL string `envconfig:"AGENT_CORE_URL" default:"http://localhost:8001"`
+
 	Port string `envconfig:"PORT" default:"8080"`
 }
 
