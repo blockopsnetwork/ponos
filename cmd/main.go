@@ -65,13 +65,18 @@ type DiagnosticsResponse struct {
 }
 
 type DiagnosticsResult struct {
-	Service     string                 `json:"service"`
-	Prompt      string                 `json:"prompt"`
-	IssueURL    string                 `json:"issue_url"`
-	SlackResult map[string]interface{} `json:"slack_result"`
-	Channel     string                 `json:"slack_channel"`
-	IssueNumber int                    `json:"issue_number"`
-	LogSnippet  string                 `json:"log_snippet"`
+	Service             string                 `json:"service"`
+	Namespace           string                 `json:"namespace"`
+	ResourceType        string                 `json:"resource_type"`
+	Prompt              string                 `json:"prompt"`
+	IssueURL            string                 `json:"issue_url"`
+	SlackResult         map[string]interface{} `json:"slack_result"`
+	Channel             string                 `json:"slack_channel"`
+	IssueNumber         int                    `json:"issue_number"`
+	LogSnippet          string                 `json:"log_snippet"`
+	Summary             string                 `json:"summary"`
+	ResourceDescription string                 `json:"resource_description"`
+	EventsSummary       string                 `json:"events_summary"`
 }
 
 func main() {
@@ -584,6 +589,17 @@ func (b *Bot) triggerDiagnostics(service, channelID string) error {
 
 	messageBuilder := strings.Builder{}
 	messageBuilder.WriteString(fmt.Sprintf(":white_check_mark: Diagnostics completed for *%s*.\n", service))
+	if diagResp.Result.Summary != "" {
+		messageBuilder.WriteString("• Summary:\n")
+		messageBuilder.WriteString(diagResp.Result.Summary)
+		messageBuilder.WriteString("\n")
+	}
+	if diagResp.Result.Namespace != "" {
+		messageBuilder.WriteString(fmt.Sprintf("• Namespace: `%s`\n", diagResp.Result.Namespace))
+	}
+	if diagResp.Result.ResourceType != "" {
+		messageBuilder.WriteString(fmt.Sprintf("• Resource type: `%s`\n", diagResp.Result.ResourceType))
+	}
 	if diagResp.Result.IssueURL != "" {
 		messageBuilder.WriteString(fmt.Sprintf("• GitHub issue: %s\n", diagResp.Result.IssueURL))
 	}
