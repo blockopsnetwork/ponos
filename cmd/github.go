@@ -164,14 +164,14 @@ func (h *GitHubDeployHandler) startNetworkUpdate(network, updateType, userID str
 	ctx := context.Background()
 
 	if h.bot.agent == nil {
-		h.notifyError(h.bot.config.SlackUpdateChannel, "AI agent not available for network updates")
+		h.notifyError(h.bot.config.SlackChannel, "AI agent not available for network updates")
 		return
 	}
 
 	releaseInfo, err := h.bot.agent.GetLatestNetworkRelease(ctx, network)
 	if err != nil {
 		h.bot.logger.Error("Failed to get latest release", "error", err, "network", network)
-		h.notifyError(h.bot.config.SlackUpdateChannel, fmt.Sprintf("Failed to get latest %s release: %v", network, err))
+		h.notifyError(h.bot.config.SlackChannel, fmt.Sprintf("Failed to get latest %s release: %v", network, err))
 		return
 	}
 
@@ -188,19 +188,19 @@ func (h *GitHubDeployHandler) startNetworkUpdate(network, updateType, userID str
 	summary, err := h.bot.agent.ProcessReleaseUpdate(ctx, payload)
 	if err != nil {
 		h.bot.logger.Error("AI agent processing failed", "error", err, "network", network)
-		h.notifyError(h.bot.config.SlackUpdateChannel, fmt.Sprintf("AI analysis failed for %s: %v", network, err))
+		h.notifyError(h.bot.config.SlackChannel, fmt.Sprintf("AI analysis failed for %s: %v", network, err))
 		return
 	}
 
 	prURL, err := h.agentUpdatePR(ctx, payload, summary)
 	if err != nil {
 		h.bot.logger.Error("Agent failed to create PR", "error", err)
-		h.notifyError(h.bot.config.SlackUpdateChannel, fmt.Sprintf("Failed to create PR for %s: %v", network, err))
+		h.notifyError(h.bot.config.SlackChannel, fmt.Sprintf("Failed to create PR for %s: %v", network, err))
 		return
 	}
 
 	h.bot.logger.Info("Network update PR created with AI analysis", "url", prURL, "network", network)
-	h.bot.sendReleaseSummaryFromAgent(h.bot.config.SlackUpdateChannel, payload, summary, prURL)
+	h.bot.sendReleaseSummaryFromAgent(h.bot.config.SlackChannel, payload, summary, prURL)
 }
 
 func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req NetworkUpdateRequest) (*NetworkUpdateResult, error) {
