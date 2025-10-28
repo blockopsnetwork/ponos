@@ -15,9 +15,9 @@ type Config struct {
 	GitHubPEMKey    string `envconfig:"GITHUB_PEM_KEY" default:""`
 	GitHubBotName   string `envconfig:"GITHUB_BOT_NAME" default:"ponos-bot"`
 
-	SlackToken         string `envconfig:"SLACK_TOKEN" default:""`
-	SlackSigningKey    string `envconfig:"SLACK_SIGNING_SECRET" default:""`
-	SlackUpdateChannel string `envconfig:"SLACK_UPDATE_CHANNEL" default:"sre-tasks"`
+	SlackToken      string `envconfig:"SLACK_TOKEN" default:""`
+	SlackSigningKey string `envconfig:"SLACK_SIGNING_SECRET" default:""`
+	SlackChannel    string `envconfig:"SLACK_CHANNEL" default:"sre-tasks"`
 
 	AgentCoreURL string `envconfig:"AGENT_CORE_URL" default:"http://localhost:8001"`
 
