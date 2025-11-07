@@ -14,6 +14,7 @@ type Config struct {
 	GitHubInstallID string `envconfig:"GITHUB_INSTALL_ID" default:""`
 	GitHubPEMKey    string `envconfig:"GITHUB_PEM_KEY" default:""`
 	GitHubBotName   string `envconfig:"GITHUB_BOT_NAME" default:"ponos-bot"`
+	GitHubMCPURL    string `envconfig:"GITHUB_MCP_URL" default:"http://localhost:3001"`
 
 	SlackToken      string `envconfig:"SLACK_TOKEN" default:""`
 	SlackSigningKey string `envconfig:"SLACK_SIGNING_SECRET" default:""`

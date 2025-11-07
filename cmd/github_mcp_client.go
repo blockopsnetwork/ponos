@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rsa"
@@ -11,8 +12,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -24,30 +28,46 @@ const (
 	tokenCacheDuration = 1 * time.Hour
 	tokenRefreshBuffer = 5 * time.Minute
 	githubAPIURL       = "https://api.github.com"
+	defaultConnectTimeout = 10 * time.Second
+	defaultRequestTimeout = 60 * time.Second
 )
 
 type GitHubMCPClient struct {
-	serverURL string
-	token     string
-	client    *http.Client
-	logger    *slog.Logger
-	sessionID string
-	appID     string
-	installID string
-	pemKey    string
-	botName   string
+	baseURL        string
+	sseURL         string
+	messagesURL    string
+	token          string
+	client         *http.Client
+	logger         *slog.Logger
+	sessionID      string
+	appID          string
+	installID      string
+	pemKey         string
+	botName        string
+	clientName     string
+	userAgent      string
+	cachedToken    string
+	tokenExpiry    time.Time
+	requestTimeout time.Duration
+	connectTimeout time.Duration
 
-	clientName  string
-	userAgent   string
-	cachedToken string
-	tokenExpiry time.Time
+	ctx     context.Context
+	cancel  context.CancelFunc
+	sseBody io.ReadCloser
+
+	pendingMu      sync.Mutex
+	pending        map[int]chan mcpEnvelope
+	requestCounter atomic.Int64
+	connectMu      sync.Mutex
+
+	endpointCh chan string
 }
 
 type MCPRequest struct {
 	JSONRPC string      `json:"jsonrpc"`
 	ID      int         `json:"id"`
 	Method  string      `json:"method"`
-	Params  interface{} `json:"params"`
+	Params  interface{} `json:"params,omitempty"`
 }
 
 type MCPResponse struct {
@@ -63,6 +83,15 @@ type MCPError struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
+type mcpEnvelope struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      *int            `json:"id,omitempty"`
+	Method  string          `json:"method,omitempty"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	Result  interface{}     `json:"result,omitempty"`
+	Error   *MCPError       `json:"error,omitempty"`
+}
+
 type ToolCallParams struct {
 	Name      string                 `json:"name"`
 	Arguments map[string]interface{} `json:"arguments"`
@@ -75,120 +104,54 @@ func NewGitHubMCPClient(serverURL, token, appID, installID, pemKey, botName stri
 	}
 
 	userAgent := clientName + "/1.0"
+	baseURL, sseURL := normalizeServerURL(serverURL)
 
 	client := &GitHubMCPClient{
-		serverURL:  serverURL,
-		token:      token,
-		client:     &http.Client{},
-		logger:     logger,
-		appID:      appID,
-		installID:  installID,
-		pemKey:     pemKey,
-		botName:    botName,
-		clientName: clientName,
-		userAgent:  userAgent,
+		baseURL:        baseURL,
+		sseURL:         sseURL,
+		token:          token,
+		client:         &http.Client{},
+		logger:         logger,
+		appID:          appID,
+		installID:      installID,
+		pemKey:         pemKey,
+		botName:        botName,
+		clientName:     clientName,
+		userAgent:      userAgent,
+		pending:        make(map[int]chan mcpEnvelope),
+		requestTimeout: defaultRequestTimeout,
+		connectTimeout: defaultConnectTimeout,
 	}
 
-	if err := client.initialize(); err != nil {
+	if err := client.connectAndInitialize(); err != nil {
 		logger.Error("failed to initialize MCP session", "error", err)
 	}
 
 	return client
 }
 
-func (g *GitHubMCPClient) initialize() error {
-	request := MCPRequest{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "initialize",
-		Params: map[string]interface{}{
-			"protocolVersion": mcpProtocolVersion,
-			"capabilities": map[string]interface{}{
-				"tools": map[string]interface{}{},
-			},
-			"clientInfo": map[string]interface{}{
-				"name":    g.clientName,
-				"version": "1.0.0",
-			},
-		},
+func normalizeServerURL(serverURL string) (string, string) {
+	trimmed := strings.TrimSpace(serverURL)
+	if trimmed == "" {
+		trimmed = "http://localhost:3001"
 	}
 
-	reqBody, err := json.Marshal(request)
-	if err != nil {
-		return fmt.Errorf("failed to marshal initialize request: %v", err)
+	trimmed = strings.TrimRight(trimmed, "/")
+	base := trimmed
+	if strings.HasSuffix(trimmed, "/sse") {
+		base = strings.TrimSuffix(trimmed, "/sse")
+	} else {
+		trimmed = trimmed + "/sse"
 	}
 
-	httpReq, err := g.createMCPRequest(nil, reqBody)
-	if err != nil {
-		return err
+	if base == "" {
+		base = "http://localhost:3001"
 	}
 
-	resp, err := g.client.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("failed to send initialize request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("initialize failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	if sessionID := resp.Header.Get("Mcp-Session-Id"); sessionID != "" {
-		g.sessionID = sessionID
-		g.logger.Info("MCP session initialized", "sessionID", sessionID)
-	}
-
-	g.logger.Info("MCP client initialized successfully")
-	return nil
+	return base, trimmed
 }
 
-func (g *GitHubMCPClient) CallTool(ctx context.Context, toolName string, args map[string]interface{}) (map[string]interface{}, error) {
-	request := MCPRequest{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  "tools/call",
-		Params: ToolCallParams{
-			Name:      toolName,
-			Arguments: args,
-		},
-	}
 
-	reqBody, err := json.Marshal(request)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %v", err)
-	}
-
-	httpReq, err := g.createMCPRequest(ctx, reqBody)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := g.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %v", err)
-	}
-
-	if resp.StatusCode == 400 && string(respBody) == "Invalid session ID\n" {
-		g.logger.Info("session expired, reinitializing...")
-		if err := g.initialize(); err != nil {
-			return nil, fmt.Errorf("failed to reinitialize session: %v", err)
-		}
-		return g.CallTool(ctx, toolName, args)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	return g.parseMCPResponse(respBody)
-}
 
 func (g *GitHubMCPClient) GetFileContent(ctx context.Context, owner, repo, path string) (string, error) {
 	args := map[string]interface{}{
@@ -323,71 +286,413 @@ func (g *GitHubMCPClient) UpdateFile(ctx context.Context, owner, repo, path, con
 	return nil
 }
 
-func (g *GitHubMCPClient) createMCPRequest(ctx context.Context, body []byte) (*http.Request, error) {
-	var req *http.Request
-	var err error
+func (g *GitHubMCPClient) connectAndInitialize() error {
+	if err := g.startEventStream(); err != nil {
+		return err
+	}
+	if err := g.initializeSession(); err != nil {
+		return err
+	}
+	g.logger.Info("MCP client initialized successfully", "session", g.sessionID)
+	return nil
+}
 
-	if ctx != nil {
-		req, err = http.NewRequestWithContext(ctx, "POST", g.serverURL, bytes.NewReader(body))
-	} else {
-		req, err = http.NewRequest("POST", g.serverURL, bytes.NewReader(body))
+func (g *GitHubMCPClient) startEventStream() error {
+	g.shutdownStream()
+
+	endpointCh := make(chan string, 1)
+	g.endpointCh = endpointCh
+
+	ctx, cancel := context.WithCancel(context.Background())
+	g.ctx = ctx
+	g.cancel = cancel
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.sseURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create SSE request: %w", err)
 	}
 
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("User-Agent", g.userAgent)
+
+	token, err := g.getAccessToken()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %v", err)
+		return fmt.Errorf("failed to get access token: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to open SSE stream: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return fmt.Errorf("SSE stream failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	g.sseBody = resp.Body
+	go g.consumeSSE(resp.Body)
+
+	select {
+	case endpoint := <-endpointCh:
+		resolved, err := g.resolveEndpoint(endpoint)
+		if err != nil {
+			return err
+		}
+		g.messagesURL = resolved
+		if parsed, err := url.Parse(resolved); err == nil {
+			g.sessionID = parsed.Query().Get("sessionId")
+		}
+		g.endpointCh = nil
+		return nil
+	case <-time.After(g.connectTimeout):
+		return fmt.Errorf("timed out waiting for MCP endpoint")
+	case <-ctx.Done():
+		return fmt.Errorf("SSE context canceled before endpoint ready: %w", ctx.Err())
+	}
+}
+
+func (g *GitHubMCPClient) resolveEndpoint(endpoint string) (string, error) {
+	if endpoint == "" {
+		return "", fmt.Errorf("received empty endpoint from MCP server")
+	}
+
+	decoded, err := url.QueryUnescape(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode endpoint '%s': %w", endpoint, err)
+	}
+
+	baseURL := g.baseURL
+	if !strings.HasSuffix(baseURL, "/") {
+		baseURL += "/"
+	}
+
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid MCP base URL %s: %w", baseURL, err)
+	}
+
+	rel, err := url.Parse(decoded)
+	if err != nil {
+		return "", fmt.Errorf("invalid endpoint path %s: %w", decoded, err)
+	}
+
+	return base.ResolveReference(rel).String(), nil
+}
+
+func (g *GitHubMCPClient) initializeSession() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	request := MCPRequest{
+		JSONRPC: "2.0",
+		Method:  "initialize",
+		Params: map[string]interface{}{
+			"protocolVersion": mcpProtocolVersion,
+			"capabilities": map[string]interface{}{
+				"tools": map[string]interface{}{},
+			},
+			"clientInfo": map[string]interface{}{
+				"name":    g.clientName,
+				"version": "1.0.0",
+			},
+		},
+	}
+
+	_, err := g.sendRequest(ctx, request)
+	return err
+}
+
+func (g *GitHubMCPClient) ensureConnected() error {
+	if g.messagesURL != "" {
+		return nil
+	}
+
+	g.connectMu.Lock()
+	defer g.connectMu.Unlock()
+
+	if g.messagesURL != "" {
+		return nil
+	}
+
+	return g.connectAndInitialize()
+}
+
+func (g *GitHubMCPClient) sendRequest(ctx context.Context, request MCPRequest) (mcpEnvelope, error) {
+	if err := g.ensureConnected(); err != nil {
+		return mcpEnvelope{}, err
+	}
+
+	if request.ID == 0 {
+		request.ID = int(g.requestCounter.Add(1))
+	}
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return mcpEnvelope{}, fmt.Errorf("failed to marshal MCP request: %w", err)
+	}
+
+	respCh := g.registerPending(request.ID)
+
+	if err := g.postMessage(payload); err != nil {
+		g.removePending(request.ID)
+		return mcpEnvelope{}, err
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, g.requestTimeout)
+	defer cancel()
+
+	select {
+	case resp, ok := <-respCh:
+		if !ok {
+			return mcpEnvelope{}, fmt.Errorf("response channel closed for request %d", request.ID)
+		}
+		return resp, nil
+	case <-waitCtx.Done():
+		g.removePending(request.ID)
+		return mcpEnvelope{}, waitCtx.Err()
+	}
+}
+
+func (g *GitHubMCPClient) registerPending(id int) chan mcpEnvelope {
+	ch := make(chan mcpEnvelope, 1)
+	g.pendingMu.Lock()
+	g.pending[id] = ch
+	g.pendingMu.Unlock()
+	return ch
+}
+
+func (g *GitHubMCPClient) removePending(id int) {
+	g.pendingMu.Lock()
+	if ch, ok := g.pending[id]; ok {
+		delete(g.pending, id)
+		close(ch)
+	}
+	g.pendingMu.Unlock()
+}
+
+func (g *GitHubMCPClient) postMessage(payload []byte) error {
+	if g.messagesURL == "" {
+		return fmt.Errorf("MCP message endpoint not ready")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, g.messagesURL, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("failed to create POST request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", g.userAgent)
 
-	accessToken, err := g.getAccessToken()
+	token, err := g.getAccessToken()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get access token: %v", err)
+		return fmt.Errorf("failed to get access token: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Authorization", "Bearer "+token)
 
-	if g.sessionID != "" {
-		req.Header.Set("Mcp-Session-Id", g.sessionID)
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send MCP request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	return req, nil
+	return nil
 }
 
-func (g *GitHubMCPClient) parseMCPResponse(respBody []byte) (map[string]interface{}, error) {
-	var mcpResp MCPResponse
-	if err := json.Unmarshal(respBody, &mcpResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %v", err)
+func (g *GitHubMCPClient) CallTool(ctx context.Context, toolName string, args map[string]interface{}) (map[string]interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if args == nil {
+		args = make(map[string]interface{})
 	}
 
-	if mcpResp.Error != nil {
-		return nil, fmt.Errorf("MCP error %d: %s", mcpResp.Error.Code, mcpResp.Error.Message)
+	result, err := g.callToolOnce(ctx, toolName, args)
+	if err == nil {
+		return result, nil
 	}
 
-	result, ok := mcpResp.Result.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("unexpected result type")
+	g.logger.Warn("MCP tool call failed, attempting reconnect", "tool", toolName, "error", err)
+	if err := g.reconnect(); err != nil {
+		return nil, fmt.Errorf("failed to reconnect MCP client: %w", err)
 	}
 
-	if isError, ok := result["isError"].(bool); ok && isError {
-		if errorText := g.extractErrorText(result); errorText != "" {
-			return nil, fmt.Errorf("MCP tool error: %s", errorText)
+	return g.callToolOnce(ctx, toolName, args)
+}
+
+func (g *GitHubMCPClient) callToolOnce(ctx context.Context, toolName string, args map[string]interface{}) (map[string]interface{}, error) {
+	request := MCPRequest{
+		JSONRPC: "2.0",
+		Method:  "tools/call",
+		Params: ToolCallParams{
+			Name:      toolName,
+			Arguments: args,
+		},
+	}
+
+	resp, err := g.sendRequest(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.Error != nil {
+		return nil, fmt.Errorf("MCP error %d: %s", resp.Error.Code, resp.Error.Message)
+	}
+
+	if result, ok := resp.Result.(map[string]interface{}); ok {
+		return result, nil
+	}
+
+	if resp.Result == nil {
+		return map[string]interface{}{}, nil
+	}
+
+	data, err := json.Marshal(resp.Result)
+	if err != nil {
+		return nil, fmt.Errorf("unexpected MCP result type %T", resp.Result)
+	}
+
+	var mapped map[string]interface{}
+	if err := json.Unmarshal(data, &mapped); err != nil {
+		return nil, fmt.Errorf("failed to decode MCP result: %w", err)
+	}
+
+	return mapped, nil
+}
+
+func (g *GitHubMCPClient) reconnect() error {
+	g.connectMu.Lock()
+	defer g.connectMu.Unlock()
+	return g.connectAndInitialize()
+}
+
+func (g *GitHubMCPClient) shutdownStream() {
+	if g.cancel != nil {
+		g.cancel()
+		g.cancel = nil
+	}
+	if g.sseBody != nil {
+		g.sseBody.Close()
+		g.sseBody = nil
+	}
+	g.messagesURL = ""
+	g.sessionID = ""
+}
+
+func (g *GitHubMCPClient) consumeSSE(body io.ReadCloser) {
+	reader := bufio.NewReader(body)
+	var eventName string
+	var dataLines []string
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err != io.EOF {
+				g.logger.Error("error reading SSE stream", "error", err)
+			}
+			break
 		}
-		return nil, fmt.Errorf("MCP tool returned error")
+
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			if len(dataLines) > 0 || eventName != "" {
+				data := strings.Join(dataLines, "\n")
+				g.dispatchSSEEvent(eventName, data)
+			}
+			eventName = ""
+			dataLines = dataLines[:0]
+			continue
+		}
+
+		if strings.HasPrefix(line, ":") {
+			continue
+		}
+
+		if strings.HasPrefix(line, "event:") {
+			eventName = strings.TrimSpace(line[len("event:"):])
+			continue
+		}
+
+		if strings.HasPrefix(line, "data:") {
+			dataLines = append(dataLines, strings.TrimSpace(line[len("data:"):]))
+		}
 	}
 
-	return result, nil
+	body.Close()
+	g.failAllPending(fmt.Errorf("MCP SSE stream closed"))
+	g.messagesURL = ""
 }
 
-func (g *GitHubMCPClient) extractErrorText(result map[string]interface{}) string {
-	if content, ok := result["content"].([]interface{}); ok && len(content) > 0 {
-		if firstItem, ok := content[0].(map[string]interface{}); ok {
-			if errorText, ok := firstItem["text"].(string); ok {
-				return errorText
+func (g *GitHubMCPClient) dispatchSSEEvent(eventName, data string) {
+	if eventName == "" {
+		eventName = "message"
+	}
+
+	switch eventName {
+	case "endpoint":
+		if g.endpointCh != nil {
+			select {
+			case g.endpointCh <- data:
+			default:
 			}
 		}
+	case "message":
+		g.handleIncomingMessage(data)
+	default:
+		g.logger.Debug("received unhandled SSE event", "event", eventName)
 	}
-	return ""
 }
+
+func (g *GitHubMCPClient) handleIncomingMessage(data string) {
+	var envelope mcpEnvelope
+	if err := json.Unmarshal([]byte(data), &envelope); err != nil {
+		g.logger.Error("failed to decode MCP message", "error", err)
+		return
+	}
+
+	if envelope.ID == nil {
+		g.logger.Debug("received MCP notification", "method", envelope.Method)
+		return
+	}
+
+	g.pendingMu.Lock()
+	ch, ok := g.pending[*envelope.ID]
+	if ok {
+		delete(g.pending, *envelope.ID)
+	}
+	g.pendingMu.Unlock()
+
+	if ok {
+		ch <- envelope
+		close(ch)
+	}
+}
+
+func (g *GitHubMCPClient) failAllPending(err error) {
+	g.pendingMu.Lock()
+	defer g.pendingMu.Unlock()
+
+	for id, ch := range g.pending {
+		delete(g.pending, id)
+		idCopy := id
+		ch <- mcpEnvelope{
+			ID: &idCopy,
+			Error: &MCPError{
+				Code:    -1,
+				Message: err.Error(),
+			},
+		}
+		close(ch)
+	}
+}
+
 
 func (g *GitHubMCPClient) getAccessToken() (string, error) {
 	if g.token != "" {

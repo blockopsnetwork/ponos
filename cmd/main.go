@@ -110,7 +110,7 @@ func runServer() {
 	api := slack.New(cfg.SlackToken)
 
 	mcpClient := NewGitHubMCPClient(
-		"https://api.githubcopilot.com/mcp/",
+		cfg.GitHubMCPURL,
 		cfg.GitHubToken,
 		cfg.GitHubAppID,
 		cfg.GitHubInstallID,
@@ -204,7 +204,7 @@ func runAgentTUI() {
 	api := slack.New(cfg.SlackToken)
 
 	mcpClient := NewGitHubMCPClient(
-		"https://api.githubcopilot.com/mcp/",
+		cfg.GitHubMCPURL,
 		cfg.GitHubToken,
 		cfg.GitHubAppID,
 		cfg.GitHubInstallID,
