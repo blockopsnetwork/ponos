@@ -47,6 +47,10 @@ docker run -d \
   ponos
 ```
 
+### Environment Variables
+
+- `GITHUB_MCP_URL` (default `http://localhost:3001`) — base URL for the GitHub MCP SSE server (`/sse` is appended automatically).
+
 ## Usage
 
 The bot responds to the following slash commands in Slack:
