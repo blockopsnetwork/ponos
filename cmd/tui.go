@@ -643,7 +643,7 @@ func (m *tuiModel) View() string {
 	sections = append(sections, logoSection)
 
 	titleSection := titleStyle.Render(appName) + " " + subtitleStyle.Render(version) + "\n" +
-		subtitleStyle.Render("Node Operator AI Assistant") + "\n" +
+		subtitleStyle.Render("Node Operator AI Agent") + "\n" +
 		subtitleStyle.Render(fmt.Sprintf("Working Directory: %s", m.currentDir)) + "\n" +
 		subtitleStyle.Render("profile: default")
 
