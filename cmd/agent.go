@@ -31,16 +31,25 @@ type NodeOperatorAgent struct {
 }
 
 type AgentSummary struct {
-	DetectedNetworks    []string `json:"detected_networks"`
-	Severity            string   `json:"severity"`
-	Reasoning           string   `json:"reasoning"`
-	ReleaseSummary      string   `json:"release_summary"`
-	ConfigChangesNeeded string   `json:"config_changes_needed"`
-	RiskAssessment      string   `json:"risk_assessment"`
-	DockerTag           string   `json:"docker_tag"`
-	PRTitle             string   `json:"pr_title"`
-	Success             bool     `json:"success"`
-	Error               string   `json:"error,omitempty"`
+	DetectedNetworks    []string                  `json:"detected_networks"`
+	Severity            string                    `json:"severity"`
+	Reasoning           string                    `json:"reasoning"`
+	ReleaseSummary      string                    `json:"release_summary"`
+	ConfigChangesNeeded string                    `json:"config_changes_needed"`
+	ConfigChangesJSON   []ConfigChangeInstruction `json:"config_changes_json"`
+	RiskAssessment      string                    `json:"risk_assessment"`
+	DockerTag           string                    `json:"docker_tag"`
+	PRTitle             string                    `json:"pr_title"`
+	Success             bool                      `json:"success"`
+	Error               string                    `json:"error,omitempty"`
+}
+
+type ConfigChangeInstruction struct {
+	Description string      `json:"description,omitempty"`
+	Action      string      `json:"action,omitempty"`
+	Path        string      `json:"path,omitempty"`
+	Value       interface{} `json:"value,omitempty"`
+	Match       interface{} `json:"match,omitempty"`
 }
 
 type NetworkReleaseInfo struct {

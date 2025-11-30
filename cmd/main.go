@@ -235,6 +235,12 @@ func runAgentTUI() {
 }
 
 func (b *Bot) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(b.config.SlackSigningKey) == "" {
+		b.logger.Error("Slack signing secret is not configured")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	sv, err := slack.NewSecretsVerifier(r.Header, b.config.SlackSigningKey)
 	if err != nil {
 		b.logger.Error("failed to create secrets verifier", "error", err)
@@ -262,7 +268,16 @@ func (b *Bot) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	eventsAPIEvent, err := slackevents.ParseEvent(body)
+	var parseOpts []slackevents.Option
+	if token := strings.TrimSpace(b.config.SlackVerifyTok); token != "" {
+		parseOpts = append(parseOpts, slackevents.OptionVerifyToken(&slackevents.TokenComparator{
+			VerificationToken: token,
+		}))
+	} else {
+		parseOpts = append(parseOpts, slackevents.OptionNoVerifyToken())
+	}
+
+	eventsAPIEvent, err := slackevents.ParseEvent(body, parseOpts...)
 	if err != nil {
 		b.logger.Error("failed to parse Slack event", "error", err)
 		w.WriteHeader(http.StatusBadRequest)
@@ -297,10 +312,14 @@ func (b *Bot) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bot) handleAppMention(event *slackevents.AppMentionEvent) {
-	text := fmt.Sprintf("Hello <@%s>! I received your message: %s", event.User, event.Text)
-	if _, _, err := b.client.PostMessage(event.Channel, slack.MsgOptionText(text, false)); err != nil {
-		b.logger.Error("error sending app mention response", "error", err, "user", event.User)
+	userMessage := b.normalizeAppMentionText(event.Text)
+	if userMessage == "" {
+		text := fmt.Sprintf("Hi <@%s>, can you provide a request after mentioning me? For example: `@Ponos AI upgrade polkadot archive to the latest stable`.", event.User)
+		b.postThreadedSlackMessage(event.Channel, event.TimeStamp, text)
+		return
 	}
+
+	go b.streamAgentResponseToSlack(event, userMessage)
 }
 
 func (b *Bot) handleMessage(event *slackevents.MessageEvent) {
@@ -630,4 +649,111 @@ func (b *Bot) triggerDiagnostics(service, channelID string) error {
 	}
 
 	return nil
+}
+
+func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, userMessage string) {
+	channel := event.Channel
+	threadTS := event.TimeStamp
+	userID := event.User
+
+	ack := fmt.Sprintf(":wave: <@%s> working on \"%s\" …", userID, userMessage)
+	b.postThreadedSlackMessage(channel, threadTS, ack)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	updates := make(chan StreamingUpdate, 10)
+	errCh := make(chan error, 1)
+
+	go func() {
+		defer close(updates)
+		errCh <- b.agent.ProcessConversationWithStreaming(ctx, userMessage, updates)
+	}()
+
+	var finalResponse string
+	var toolSummaries []string
+
+	for update := range updates {
+		switch update.Type {
+		case "assistant":
+			if update.Message != "" {
+				finalResponse = update.Message
+			}
+		case "tool_start":
+			if update.Tool != "" {
+				status := fmt.Sprintf(":gear: Running *%s*…", formatToolName(update.Tool))
+				b.postThreadedSlackMessage(channel, threadTS, status)
+			}
+		case "tool_result":
+			summary := update.Summary
+			if summary == "" {
+				summary = update.Message
+			}
+			if summary != "" {
+				icon := ":white_check_mark:"
+				if !update.Success {
+					icon = ":x:"
+				}
+				toolSummaries = append(toolSummaries, fmt.Sprintf("%s %s", icon, summary))
+			}
+		case "todo_update":
+			if len(update.Todos) > 0 {
+				status := fmt.Sprintf(":memo: Updated TODOs (%d items).", len(update.Todos))
+				b.postThreadedSlackMessage(channel, threadTS, status)
+			}
+		}
+	}
+
+	if err := <-errCh; err != nil {
+		b.logger.Error("agent conversation failed", "error", err)
+		b.postThreadedSlackMessage(channel, threadTS, fmt.Sprintf(":x: I hit an error while processing your request: %v", err))
+		return
+	}
+
+	if finalResponse == "" {
+		finalResponse = "Done! Let me know if you need anything else."
+	}
+
+	if len(toolSummaries) > 0 {
+		finalResponse = fmt.Sprintf("%s\n\n*Tool summary:*\n%s", finalResponse, strings.Join(toolSummaries, "\n"))
+	}
+
+	b.postThreadedSlackMessage(channel, threadTS, finalResponse)
+}
+
+func (b *Bot) normalizeAppMentionText(text string) string {
+	clean := strings.TrimSpace(text)
+	if clean == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(clean, "<@") {
+		if idx := strings.Index(clean, ">"); idx != -1 {
+			clean = strings.TrimSpace(clean[idx+1:])
+		}
+	}
+
+	return clean
+}
+
+func (b *Bot) postThreadedSlackMessage(channel, threadTS, text string) {
+	if text == "" {
+		return
+	}
+
+	opts := []slack.MsgOption{slack.MsgOptionText(text, false)}
+	if threadTS != "" {
+		opts = append(opts, slack.MsgOptionTS(threadTS))
+	}
+
+	if _, _, err := b.client.PostMessage(channel, opts...); err != nil {
+		b.logger.Error("failed to post Slack message", "error", err, "channel", channel)
+	}
+}
+
+func formatToolName(name string) string {
+	if name == "" {
+		return "tool"
+	}
+	return strings.ReplaceAll(name, "_", " ")
 }

@@ -73,6 +73,11 @@ func BuildReleaseNotificationBlocks(payload ReleasesWebhookPayload, summary *Age
 	} else {
 		messageText.WriteString("- No config changes noted.\n")
 	}
+	if structured := formatStructuredConfigChanges(summary.ConfigChangesJSON); structured != "" {
+		messageText.WriteString("\n:wrench: *Structured Config Changes*\n")
+		messageText.WriteString(structured)
+		messageText.WriteString("\n")
+	}
 	messageText.WriteString("\n")
 
 	messageText.WriteString(fmt.Sprintf(":warning: *Risk*\n- %s: %s\n\n",
@@ -104,6 +109,39 @@ func extractVersionTag(aiResponse string) string {
 	return aiResponse
 }
 
+func formatStructuredConfigChanges(instructions []ConfigChangeInstruction) string {
+	if len(instructions) == 0 {
+		return ""
+	}
+
+	var builder strings.Builder
+	for _, instr := range instructions {
+		if instr.Description == "" && instr.Path == "" && instr.Action == "" {
+			continue
+		}
+
+		var parts []string
+		if instr.Description != "" {
+			parts = append(parts, instr.Description)
+		} else if instr.Action != "" {
+			parts = append(parts, strings.Title(instr.Action))
+		}
+		if instr.Path != "" {
+			parts = append(parts, fmt.Sprintf("`%s`", instr.Path))
+		}
+
+		if len(parts) == 0 {
+			continue
+		}
+
+		builder.WriteString("• ")
+		builder.WriteString(strings.Join(parts, " — "))
+		builder.WriteString("\n")
+	}
+
+	return strings.TrimSpace(builder.String())
+}
+
 func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSummary, release *ReleaseInfo) (title, body, commitMessage string) {
 	if botName == "" {
 		botName = "Ponos"
@@ -130,8 +168,13 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 	}
 
 	configChanges := strings.TrimSpace(summary.ConfigChangesNeeded)
+	structured := formatStructuredConfigChanges(summary.ConfigChangesJSON)
 	if configChanges == "" || strings.EqualFold(configChanges, "Not specified") {
-		configChanges = "Updated Docker image tags to reference the latest stable release."
+		if structured != "" {
+			configChanges = structured
+		} else {
+			configChanges = "Updated Docker image tags to reference the latest stable release."
+		}
 	}
 
 	riskAssessment := strings.TrimSpace(summary.RiskAssessment)
@@ -151,6 +194,7 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 %s
 
 **Severity:** %s
+%s
 
 ---
 **About this PR:**
@@ -164,6 +208,12 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 		configChanges,
 		riskAssessment,
 		strings.ToUpper(summary.Severity),
+		func() string {
+			if structured == "" || structured == configChanges {
+				return ""
+			}
+			return fmt.Sprintf("\n**Structured Config Changes:**\n%s\n", structured)
+		}(),
 		botName,
 		botName)
 
