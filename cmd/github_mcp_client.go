@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,11 +25,11 @@ import (
 )
 
 const (
-	mcpProtocolVersion = "2024-11-05"
-	jwtMaxDuration     = 10 * time.Minute
-	tokenCacheDuration = 1 * time.Hour
-	tokenRefreshBuffer = 5 * time.Minute
-	githubAPIURL       = "https://api.github.com"
+	mcpProtocolVersion    = "2024-11-05"
+	jwtMaxDuration        = 10 * time.Minute
+	tokenCacheDuration    = 1 * time.Hour
+	tokenRefreshBuffer    = 5 * time.Minute
+	githubAPIURL          = "https://api.github.com"
 	defaultConnectTimeout = 10 * time.Second
 	defaultRequestTimeout = 60 * time.Second
 )
@@ -50,6 +52,8 @@ type GitHubMCPClient struct {
 	tokenExpiry    time.Time
 	requestTimeout time.Duration
 	connectTimeout time.Duration
+	authMode       string
+	authModeLogged bool
 
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -106,11 +110,23 @@ func NewGitHubMCPClient(serverURL, token, appID, installID, pemKey, botName stri
 	userAgent := clientName + "/1.0"
 	baseURL, sseURL := normalizeServerURL(serverURL)
 
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   defaultConnectTimeout,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   defaultConnectTimeout,
+		ResponseHeaderTimeout: defaultRequestTimeout,
+		ExpectContinueTimeout: 5 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+		Proxy:                 http.ProxyFromEnvironment,
+	}
+
 	client := &GitHubMCPClient{
 		baseURL:        baseURL,
 		sseURL:         sseURL,
 		token:          token,
-		client:         &http.Client{},
+		client:         &http.Client{Transport: transport},
 		logger:         logger,
 		appID:          appID,
 		installID:      installID,
@@ -150,8 +166,6 @@ func normalizeServerURL(serverURL string) (string, string) {
 
 	return base, trimmed
 }
-
-
 
 func (g *GitHubMCPClient) GetFileContent(ctx context.Context, owner, repo, path string) (string, error) {
 	args := map[string]interface{}{
@@ -499,6 +513,9 @@ func (g *GitHubMCPClient) postMessage(payload []byte) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		if rateErr := g.handleRateLimit(resp); rateErr != nil {
+			return rateErr
+		}
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
@@ -693,17 +710,67 @@ func (g *GitHubMCPClient) failAllPending(err error) {
 	}
 }
 
+func (g *GitHubMCPClient) handleRateLimit(resp *http.Response) error {
+	if resp == nil {
+		return nil
+	}
+
+	if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusTooManyRequests {
+		return nil
+	}
+
+	if remaining := resp.Header.Get("X-RateLimit-Remaining"); remaining != "" && remaining != "0" {
+		return nil
+	}
+
+	resetAt := parseRateLimitReset(resp.Header.Get("X-RateLimit-Reset"))
+	if !resetAt.IsZero() {
+		formatted := resetAt.UTC().Format(time.RFC3339)
+		g.logger.Warn("GitHub API rate limit exhausted", "resets_at", formatted)
+		return fmt.Errorf("GitHub API rate limit exceeded; try again after %s", formatted)
+	}
+
+	g.logger.Warn("GitHub API rate limit exhausted", "resets_at", "unknown")
+	return fmt.Errorf("GitHub API rate limit exceeded; try again later")
+}
+
+func parseRateLimitReset(header string) time.Time {
+	if header == "" {
+		return time.Time{}
+	}
+
+	if epoch, err := strconv.ParseInt(header, 10, 64); err == nil && epoch > 0 {
+		return time.Unix(epoch, 0)
+	}
+
+	if ts, err := time.Parse(time.RFC3339, header); err == nil {
+		return ts
+	}
+
+	return time.Time{}
+}
 
 func (g *GitHubMCPClient) getAccessToken() (string, error) {
 	if g.token != "" {
+		g.logAuthMode("personal_access_token")
 		return g.token, nil
 	}
 
 	if g.hasGitHubAppCredentials() {
+		g.logAuthMode("github_app_installation")
 		return g.getCachedOrGenerateToken()
 	}
 
 	return "", fmt.Errorf("no authentication credentials provided")
+}
+
+func (g *GitHubMCPClient) logAuthMode(mode string) {
+	if g.authModeLogged && g.authMode == mode {
+		return
+	}
+	g.authMode = mode
+	g.authModeLogged = true
+	g.logger.Info("Using GitHub credentials", "mode", mode)
 }
 
 func (g *GitHubMCPClient) hasGitHubAppCredentials() bool {

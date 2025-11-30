@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/kelseyhightower/envconfig"
 	"gopkg.in/yaml.v3"
@@ -18,6 +19,7 @@ type Config struct {
 
 	SlackToken      string `envconfig:"SLACK_TOKEN" default:""`
 	SlackSigningKey string `envconfig:"SLACK_SIGNING_SECRET" default:""`
+	SlackVerifyTok  string `envconfig:"SLACK_VERIFICATION_TOKEN" default:""`
 	SlackChannel    string `envconfig:"SLACK_CHANNEL" default:"sre-tasks"`
 
 	AgentCoreURL string `envconfig:"AGENT_CORE_URL" default:"http://localhost:8001"`
@@ -31,11 +33,12 @@ type ProjectConfig struct {
 }
 
 type Project struct {
-	Network string   `yaml:"network"`
-	Owner   string   `yaml:"owner"`
-	Name    string   `yaml:"name"`
-	Branch  string   `yaml:"branch"`
-	Paths   []string `yaml:"paths"`
+	Network     string   `yaml:"network"`
+	ProjectName string   `yaml:"project_name"`
+	Owner       string   `yaml:"owner"`
+	Name        string   `yaml:"name"`
+	Branch      string   `yaml:"branch"`
+	Paths       []string `yaml:"paths"`
 }
 
 func Load() (*Config, error) {
@@ -44,7 +47,25 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.Sanitize()
 	return &cfg, nil
+}
+
+func (c *Config) Sanitize() {
+	c.GitHubToken = strings.TrimSpace(c.GitHubToken)
+	c.GitHubAppID = strings.TrimSpace(c.GitHubAppID)
+	c.GitHubInstallID = strings.TrimSpace(c.GitHubInstallID)
+	c.GitHubPEMKey = strings.TrimSpace(c.GitHubPEMKey)
+	c.GitHubBotName = strings.TrimSpace(c.GitHubBotName)
+	c.GitHubMCPURL = strings.TrimSpace(c.GitHubMCPURL)
+
+	c.SlackToken = strings.TrimSpace(c.SlackToken)
+	c.SlackSigningKey = strings.TrimSpace(c.SlackSigningKey)
+	c.SlackChannel = strings.TrimSpace(c.SlackChannel)
+	c.SlackVerifyTok = strings.TrimSpace(c.SlackVerifyTok)
+
+	c.AgentCoreURL = strings.TrimSpace(c.AgentCoreURL)
+	c.Port = strings.TrimSpace(c.Port)
 }
 
 func (c *Config) ValidateGitHubBotConfig() error {
