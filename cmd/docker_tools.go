@@ -16,7 +16,7 @@ func NewDockerOperations() *DockerOperations {
 	return &DockerOperations{}
 }
 
-func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClient *GitHubMCPClient, agent *NodeOperatorAgent, filesToUpdate []fileInfo, network, client string) (*dockerTagResult, error) {
+func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClient *GitHubMCPClient, agent AgentClient, filesToUpdate []fileInfo, network, client string) (*dockerTagResult, error) {
 	imageToTag := make(map[string]string)
 
 	for _, f := range filesToUpdate {
@@ -103,7 +103,7 @@ func (d *DockerOperations) fetchLatestTagFromNodeReleases(network, client string
 	return "", fmt.Errorf("docker tag not found for network=%s client=%s", network, client)
 }
 
-func (d *DockerOperations) extractImageReposWithLLM(ctx context.Context, agent *NodeOperatorAgent, yamlContent string) []string {
+func (d *DockerOperations) extractImageReposWithLLM(ctx context.Context, agent AgentClient, yamlContent string) []string {
 	if agent != nil {
 		if llmRepos, err := agent.AnalyzeYAMLForBlockchainContainers(ctx, yamlContent); err == nil && len(llmRepos) > 0 {
 			return llmRepos

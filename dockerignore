@@ -16,9 +16,6 @@ Dockerfile
 bin/
 tmp/
 
-# Task files
-Taskfile.yml
-
 # Any local environment files
 .env*
 *.env
