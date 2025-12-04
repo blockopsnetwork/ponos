@@ -421,33 +421,47 @@ If no blockchain containers are found, return: []`, yamlContent)
 }
 
 func (agent *NodeOperatorAgent) parseYAMLAnalysisResponse(response string) []string {
-	response = strings.TrimSpace(response)
-
-	startIdx := strings.Index(response, "[")
-	endIdx := strings.LastIndex(response, "]")
-
-	if startIdx == -1 || endIdx == -1 || startIdx >= endIdx {
-		agent.logger.Warn("Invalid JSON response from LLM", "response", response[:min(len(response), 200)])
-		return []string{}
-	}
-
-	jsonStr := response[startIdx : endIdx+1]
-
 	var repos []string
-	jsonStr = strings.Trim(jsonStr, "[]")
-	if jsonStr == "" {
+	if err := agent.extractAndUnmarshalJSON(response, &repos); err != nil {
+		agent.logger.Warn("Failed to parse YAML analysis response", "error", err, "response", response)
 		return []string{}
 	}
+	return repos
+}
 
-	parts := strings.Split(jsonStr, ",")
-	for _, part := range parts {
-		repo := strings.Trim(strings.TrimSpace(part), `"`)
-		if repo != "" {
-			repos = append(repos, repo)
+func (agent *NodeOperatorAgent) extractAndUnmarshalJSON(input string, target interface{}) error {
+	// Find the start and end of the JSON content
+	input = strings.TrimSpace(input)
+	
+	// Handle markdown code blocks
+	if strings.HasPrefix(input, "```") {
+		lines := strings.Split(input, "\n")
+		if len(lines) >= 2 {
+			// Remove first line (```json or ```) and last line (```)
+			if strings.HasPrefix(lines[0], "```") {
+				lines = lines[1:]
+			}
+			if len(lines) > 0 && strings.HasPrefix(lines[len(lines)-1], "```") {
+				lines = lines[:len(lines)-1]
+			}
+			input = strings.Join(lines, "\n")
 		}
 	}
 
-	return repos
+	// Find first '{' or '['
+	startIdx := strings.IndexAny(input, "{[")
+	if startIdx == -1 {
+		return fmt.Errorf("no JSON start found")
+	}
+
+	// Find last '}' or ']'
+	endIdx := strings.LastIndexAny(input, "}]")
+	if endIdx == -1 || endIdx <= startIdx {
+		return fmt.Errorf("no JSON end found")
+	}
+
+	jsonStr := input[startIdx : endIdx+1]
+	return json.Unmarshal([]byte(jsonStr), target)
 }
 
 type StreamingUpdate struct {
@@ -645,45 +659,19 @@ func (agent *NodeOperatorAgent) parseUpgradeIntentResponse(response string) *Upg
 		Explanation:    "Unable to parse response",
 	}
 
-	responseLower := strings.ToLower(response)
-	if strings.Contains(responseLower, `"requires_action": true`) {
-		intent.RequiresAction = true
+	if err := agent.extractAndUnmarshalJSON(response, intent); err != nil {
+		agent.logger.Warn("Failed to parse upgrade intent response", "error", err, "response", response)
+		// Fallback to fuzzy matching if JSON parsing fails, or just return default
+		// For now, let's keep the default "unknown" state which is safe
+		return intent
 	}
 
-	if strings.Contains(responseLower, `"network": "ethereum"`) {
-		intent.Network = "ethereum"
-	} else if strings.Contains(responseLower, `"network": "polkadot"`) {
-		intent.Network = "polkadot"
-	} else if strings.Contains(responseLower, `"network": "kusama"`) {
-		intent.Network = "kusama"
-	} else if strings.Contains(responseLower, `"network": "solana"`) {
-		intent.Network = "solana"
-	}
+	// Normalize fields
+	intent.Network = strings.ToLower(intent.Network)
+	intent.ActionType = strings.ToLower(intent.ActionType)
 
-	userMessage := strings.ToLower(response)
-	if strings.Contains(userMessage, "ethereum") || strings.Contains(userMessage, "geth") ||
-		strings.Contains(userMessage, "lighthouse") || strings.Contains(userMessage, "reth") ||
-		strings.Contains(userMessage, "besu") {
-		intent.Network = "ethereum"
-		intent.RequiresAction = true
-		intent.ActionType = "upgrade"
-	} else if strings.Contains(userMessage, "polkadot") || strings.Contains(userMessage, "dot") {
-		intent.Network = "polkadot"
-		intent.RequiresAction = true
-		intent.ActionType = "upgrade"
-	} else if strings.Contains(userMessage, "kusama") || strings.Contains(userMessage, "ksm") {
-		intent.Network = "kusama"
-		intent.RequiresAction = true
-		intent.ActionType = "upgrade"
-	}
-
-	if strings.Contains(responseLower, `"action_type": "upgrade"`) {
-		intent.ActionType = "upgrade"
-	} else if strings.Contains(responseLower, `"action_type": "update"`) {
-		intent.ActionType = "update"
-	}
-
-	if intent.Network != "unknown" {
+	// Ensure confidence is high if we successfully parsed valid data
+	if intent.Network != "unknown" && intent.Network != "" {
 		intent.Confidence = "high"
 	}
 
