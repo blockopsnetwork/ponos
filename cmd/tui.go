@@ -807,12 +807,12 @@ func (tui *PonosAgentTUI) handleUserInputWithStreaming(ctx context.Context, inpu
 
 	if tui.bot.agent == nil {
 		tui.logger.Error("Agent-core not available")
-		updates <- StreamingUpdate{Type: "assistant", Message: "Sorry, the agent-core backend is not available. Please ensure agent-core is running and accessible."}
+		updates <- StreamingUpdate{Type: "assistant", Message: "Sorry, the nodeoperator api is not available. Please ensure the api is running and accessible."}
 		updates <- StreamingUpdate{Type: "complete", Message: "Done"}
 		return nil
 	}
 
-	tui.logger.Info("Sending user prompt directly to agent-core", "input", input)
+	tui.logger.Info("Sending user prompt directly to nodeoperator api", "input", input)
 	return tui.bot.agent.ProcessConversationWithStreamingAndHistory(ctx, input, conversationHistory, updates)
 }
 

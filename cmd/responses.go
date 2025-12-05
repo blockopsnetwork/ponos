@@ -64,10 +64,11 @@ func BuildReleaseNotificationBlocks(payload ReleasesWebhookPayload, summary *Age
 		}
 	}
 
-	messageText.WriteString(fmt.Sprintf(":memo: *AI Generated Release Summary*\n%s\n\n", releaseSummary))
+	messageText.WriteString(fmt.Sprintf(":memo: *Nodeoperator Agent Generated Release Summary*\n%s\n\n", releaseSummary))
 
 	messageText.WriteString(":gear: *Next Steps*\n")
-	messageText.WriteString("- PR created → review/merge required.\n")
+	messageText.WriteString("- PR created and hands off to Authorized reviewer for Approval and Merge\n")
+
 	if summary.ConfigChangesNeeded != "" && summary.ConfigChangesNeeded != "Not specified" {
 		messageText.WriteString(fmt.Sprintf("- Config changes: %s\n", summary.ConfigChangesNeeded))
 	} else {
@@ -147,6 +148,10 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 		botName = "Ponos"
 	}
 
+	if networkName == "" {
+		networkName = "network"
+	}
+
 	cleanReleaseTag := extractVersionTag(releaseTag)
 	if summary.PRTitle != "" {
 		title = summary.PRTitle
@@ -182,6 +187,19 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 		riskAssessment = "Review release notes and run smoke tests before promoting to production."
 	}
 
+	if title == "" {
+		title = fmt.Sprintf("%s: Update %s", botName, networkName)
+	}
+
+	if cleanReleaseTag == "" {
+		cleanReleaseTag = "latest"
+	}
+
+	severity := strings.TrimSpace(summary.Severity)
+	if severity == "" || strings.EqualFold(severity, "Not specified") {
+		severity = "info"
+	}
+
 	body = fmt.Sprintf(`## 🤖 Automated Update by %s
 
 **NodeOperator AI Analysis:**
@@ -207,7 +225,7 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 		releaseSummary,
 		configChanges,
 		riskAssessment,
-		strings.ToUpper(summary.Severity),
+		strings.ToUpper(severity),
 		func() string {
 			if structured == "" || structured == configChanges {
 				return ""

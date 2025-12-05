@@ -25,6 +25,8 @@ type Config struct {
 	AgentCoreURL string `envconfig:"AGENT_CORE_URL" default:"http://localhost:8001"`
 
 	Port string `envconfig:"PORT" default:"8080"`
+
+	EnableReleaseListener bool `envconfig:"ENABLE_RELEASE_LISTENER" default:"false"`
 }
 
 type ProjectConfig struct {

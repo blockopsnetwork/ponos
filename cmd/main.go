@@ -6,8 +6,11 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/blockops-sh/ponos/config"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/slack-go/slack"
 )
 
@@ -23,14 +26,28 @@ func main() {
 }
 
 func runAgentTUI() {
-	// In TUI mode, redirect logs to a file to avoid interfering with the interface
-	var logger *slog.Logger
-	logFile, err := os.OpenFile("/tmp/ponos-tui.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
-	} else {
-		logger = slog.New(slog.NewJSONHandler(logFile, nil))
+	logPath := filepath.Join(os.TempDir(), "ponos-tui.log")
+	if env := strings.TrimSpace(os.Getenv("PONOS_TUI_LOG_PATH")); env != "" {
+		logPath = env
 	}
+	logDir := filepath.Dir(logPath)
+	if logDir != "" && logDir != "." {
+		if err := os.MkdirAll(logDir, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to create log directory %s: %v\n", logDir, err)
+		}
+	}
+
+	var logWriter io.Writer
+	logFile, err := tea.LogToFile(logPath, "ponos-tui ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: unable to create TUI log file at %s: %v\n", logPath, err)
+		fmt.Fprintf(os.Stderr, "Set PONOS_TUI_LOG_PATH to a writable location. Logs will be discarded otherwise\n")
+		logWriter = io.Discard
+	} else {
+		logWriter = logFile
+	}
+
+	logger := slog.New(slog.NewJSONHandler(logWriter, nil))
 	slog.SetDefault(logger)
 
 	cfg, err := config.Load()
@@ -42,47 +59,39 @@ func runAgentTUI() {
 	}
 
 	if err := cfg.ValidateGitHubBotConfig(); err != nil {
-		fmt.Fprintf(os.Stderr, "GitHub configuration error: %v\n", err)
-		fmt.Fprintf(os.Stderr, "\nRequired environment variables:\n")
-		fmt.Fprintf(os.Stderr, "  • Either set GITHUB_TOKEN for personal access token authentication\n")
-		fmt.Fprintf(os.Stderr, "  • Or set all three for GitHub App authentication:\n")
-		fmt.Fprintf(os.Stderr, "    - GITHUB_APP_ID\n")
-		fmt.Fprintf(os.Stderr, "    - GITHUB_INSTALL_ID\n")
-		fmt.Fprintf(os.Stderr, "    - GITHUB_PEM_KEY\n")
-		fmt.Fprintf(os.Stderr, "\nSee config/config.go for setup instructions.\n")
-		logger.Error("GitHub bot configuration error", "error", err)
-		logger.Info("See config/config.go for setup instructions")
+		fmt.Fprintf(os.Stderr, "GitHub auth not configured: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Set either GITHUB_TOKEN (PAT) or GITHUB_APP_ID/GITHUB_INSTALL_ID/GITHUB_PEM_KEY (Github Bot auth).\n")
+		logger.Error("GitHub auth not configured", "error", err)
 		os.Exit(1)
+	}
+
+	if strings.TrimSpace(cfg.SlackToken) == "" || strings.TrimSpace(cfg.SlackSigningKey) == "" {
+		fmt.Fprintf(os.Stderr, "Slack configuration missing: SLACK_TOKEN and SLACK_SIGNING_SECRET are required.\n")
+		logger.Error("Slack configuration missing", "has_token", cfg.SlackToken != "", "has_signing_key", cfg.SlackSigningKey != "")
+		os.Exit(1)
+	}
+
+	if strings.TrimSpace(cfg.AgentCoreURL) == "" {
+		fmt.Fprintf(os.Stderr, "nodeoperator api URL is not configured. Set AGENT_CORE_URL.\n")
+		logger.Error("nodeoperator api URL is not configured")
+		os.Exit(1)
+	}
+
+	if strings.TrimSpace(cfg.GitHubMCPURL) == "" {
+		logger.Warn("GITHUB_MCP_URL is empty; GitHub MCP calls may fail", "github_mcp_url", cfg.GitHubMCPURL)
 	}
 
 	api := slack.New(cfg.SlackToken)
 
-	mcpClient := NewGitHubMCPClient(
-		cfg.GitHubMCPURL,
-		cfg.GitHubToken,
-		cfg.GitHubAppID,
-		cfg.GitHubInstallID,
-		cfg.GitHubPEMKey,
-		cfg.GitHubBotName,
-		logger,
-	)
-
 	agent, err := NewNodeOperatorAgent(logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to instantiate agent: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Please check your agent-core service configuration (OpenAI API key, etc.)\n")
-		logger.Error("failed to instantiate agent", "error", err)
+		fmt.Fprintf(os.Stderr, "Please check your nodeoperator api service configuration (API Key, URL, etc.)\n")
+		logger.Error("failed to instantiate nodeoperator api client", "error", err)
 		os.Exit(1)
 	}
 
-	bot := &Bot{
-		client:    api,
-		config:    cfg,
-		logger:    logger,
-		mcpClient: mcpClient,
-		agent:     agent,
-	}
-	bot.githubHandler = NewGitHubDeployHandler(logger, cfg, api, agent, mcpClient)
+	bot := NewBot(cfg, logger, api, agent)
 
 	tui := NewPonosAgentTUI(bot, logger)
 	tui.Start()

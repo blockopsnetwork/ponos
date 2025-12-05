@@ -44,6 +44,7 @@ type AgentSummary struct {
 	Error               string                    `json:"error,omitempty"`
 }
 
+// ToDo: Improvement should be parse the flat json string into this struct
 type ConfigChangeInstruction struct {
 	Description string      `json:"description,omitempty"`
 	Action      string      `json:"action,omitempty"`
@@ -96,17 +97,17 @@ func NewNodeOperatorAgent(logger *slog.Logger) (*NodeOperatorAgent, error) {
 		httpClient: &http.Client{
 			Timeout: 300 * time.Second, // 5 minutes for streaming operations
 		},
-		useAgentCore: true, // Always use agent-core for conversations
+		useAgentCore: true, // Always use nodeoperator api for conversations
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	if err := agent.healthCheckAgentCore(ctx); err != nil {
-		return nil, fmt.Errorf("agent-core is not available: %w. This system requires agent-core to be running", err)
+		return nil, fmt.Errorf("nodeoperator api is not available: %w. This system requires the api to be running", err)
 	}
 
-	logger.Info("Connected to intelligent agent-core backend", "url", agentCoreURL)
+	logger.Info("Connected to nodeoperator api backend", "url", agentCoreURL)
 
 	return agent, nil
 }
@@ -125,7 +126,7 @@ func (agent *NodeOperatorAgent) healthCheckAgentCore(ctx context.Context) error 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("agent-core health check failed with status %d", resp.StatusCode)
+		return fmt.Errorf("nodeoperator api health check failed with status %d", resp.StatusCode)
 	}
 
 	return nil
@@ -155,22 +156,22 @@ func (agent *NodeOperatorAgent) callAgentCoreReleaseAnalysis(ctx context.Context
 
 	resp, err := agent.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("HTTP request to agent-core failed: %w", err)
+		return nil, fmt.Errorf("HTTP request to nodeoperator api failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("agent-core returned error status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("nodeoperator api returned error status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var analysisResult AgentSummary
 	if err := json.NewDecoder(resp.Body).Decode(&analysisResult); err != nil {
-		return nil, fmt.Errorf("failed to decode agent-core response: %w", err)
+		return nil, fmt.Errorf("failed to decode nodeoperator api response: %w", err)
 	}
 
 	if !analysisResult.Success {
-		return nil, fmt.Errorf("agent-core analysis failed: %s", analysisResult.Error)
+		return nil, fmt.Errorf("nodeoperator api analysis failed: %s", analysisResult.Error)
 	}
 
 	return &analysisResult, nil
@@ -202,23 +203,23 @@ func (agent *NodeOperatorAgent) callAgentCore(ctx context.Context, prompt string
 
 	resp, err := agent.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("HTTP request to agent-core failed: %w", err)
+		return "", fmt.Errorf("HTTP request to nodeoperator api failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("agent-core returned error status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("nodeoperator api returned error status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var response map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", fmt.Errorf("failed to decode agent-core response: %w", err)
+		return "", fmt.Errorf("failed to decode nodeoperator api response: %w", err)
 	}
 
 	content, ok := response["content"].(string)
 	if !ok {
-		return "", fmt.Errorf("invalid response format from agent-core")
+		return "", fmt.Errorf("invalid response format from nodeoperator api")
 	}
 
 	return content, nil
@@ -351,7 +352,7 @@ func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Read
 
 		case "error":
 			agent.logger.Error("Stream error", "message", message)
-			return fmt.Errorf("agent-core error: %s", message)
+			return fmt.Errorf("nodeoperator api error: %s", message)
 		}
 	}
 
@@ -365,7 +366,7 @@ func (agent *NodeOperatorAgent) processStreamingResponseWithUpdates(body io.Read
 func (agent *NodeOperatorAgent) ProcessReleaseUpdate(ctx context.Context, payload ReleasesWebhookPayload) (*AgentSummary, error) {
 	response, err := agent.callAgentCoreReleaseAnalysis(ctx, payload)
 	if err != nil {
-		agent.logger.Error("agent-core blockchain analysis failed", "error", err)
+		agent.logger.Error("nodeoperator api blockchain analysis failed", "error", err)
 		return nil, err
 	}
 
@@ -377,12 +378,12 @@ func (agent *NodeOperatorAgent) AnalyzeYAMLForBlockchainContainers(ctx context.C
 
 	response, err := agent.callAgentCore(ctx, prompt)
 	if err != nil {
-		agent.logger.Error("agent-core YAML analysis failed", "error", err)
+		agent.logger.Error("nodeoperator api YAML analysis failed", "error", err)
 		return nil, err
 	}
 
 	repos := agent.parseYAMLAnalysisResponse(response)
-	agent.logger.Info("agent-core YAML analysis completed", "containers_found", len(repos))
+	agent.logger.Info("nodeoperator api YAML analysis completed", "containers_found", len(repos))
 
 	return repos, nil
 }
@@ -432,7 +433,7 @@ func (agent *NodeOperatorAgent) parseYAMLAnalysisResponse(response string) []str
 func (agent *NodeOperatorAgent) extractAndUnmarshalJSON(input string, target interface{}) error {
 	// Find the start and end of the JSON content
 	input = strings.TrimSpace(input)
-	
+
 	// Handle markdown code blocks
 	if strings.HasPrefix(input, "```") {
 		lines := strings.Split(input, "\n")
@@ -487,16 +488,16 @@ type TodoItem struct {
 
 func (agent *NodeOperatorAgent) ProcessConversationWithStreaming(ctx context.Context, userMessage string, updates chan<- StreamingUpdate) error {
 	agent.logger.Info("ProcessConversationWithStreaming called", "message", userMessage)
-	return agent.processConversationWithAgentCoreStreaming(ctx, userMessage, updates)
+	return agent.processConversationWithAgentCoreStreaming(ctx, userMessage, nil, updates)
 }
 
 func (agent *NodeOperatorAgent) ProcessConversationWithStreamingAndHistory(ctx context.Context, userMessage string, conversationHistory []map[string]string, updates chan<- StreamingUpdate) error {
 	agent.logger.Info("ProcessConversationWithStreamingAndHistory called", "message", userMessage, "history_length", len(conversationHistory))
-	return agent.processConversationWithAgentCoreStreamingAndHistory(ctx, userMessage, conversationHistory, updates)
+	return agent.processConversationWithAgentCoreStreaming(ctx, userMessage, conversationHistory, updates)
 }
 
-func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreaming(ctx context.Context, userMessage string, updates chan<- StreamingUpdate) error {
-	agent.logger.Info("Using intelligent agent-core for real-time streaming", "message", userMessage)
+func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreaming(ctx context.Context, userMessage string, conversationHistory []map[string]string, updates chan<- StreamingUpdate) error {
+	agent.logger.Info("Using nodeoperator api for real-time streaming", "message", userMessage)
 
 	request := map[string]interface{}{
 		"message": userMessage,
@@ -513,59 +514,8 @@ func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreaming(ctx co
 		},
 	}
 
-	requestBody, err := json.Marshal(request)
-	if err != nil {
-		agent.logger.Error("Failed to marshal request", "error", err)
-		return fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	url := fmt.Sprintf("%s/agent/stream", agent.agentCoreURL)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(requestBody))
-	if err != nil {
-		agent.logger.Error("Failed to create HTTP request", "error", err)
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("User-Agent", "Ponos-TUI/1.0")
-
-	resp, err := agent.httpClient.Do(req)
-	if err != nil {
-		agent.logger.Error("HTTP request to agent-core failed", "error", err, "url", url)
-		return fmt.Errorf("connection failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		agent.logger.Error("Agent-core returned error", "status", resp.StatusCode, "body", string(body))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
-	}
-
-	return agent.processStreamingResponseWithUpdates(resp.Body, updates)
-}
-
-func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreamingAndHistory(ctx context.Context, userMessage string, conversationHistory []map[string]string, updates chan<- StreamingUpdate) error {
-	agent.logger.Info("Using agent-core for real-time streaming with conversation history", "message", userMessage, "history_length", len(conversationHistory))
-
-	request := map[string]interface{}{
-		"message":              userMessage,
-		"conversation_history": conversationHistory,
-		"context": map[string]interface{}{
-			"source":    "ponos-tui",
-			"timestamp": time.Now().Format(time.RFC3339),
-			"user_type": "blockchain_operator",
-			"capabilities": []string{
-				"network_upgrades",
-				"file_operations",
-				"system_commands",
-				"blockchain_analysis",
-			},
-		},
-	}
-
 	if len(conversationHistory) > 0 {
+		request["conversation_history"] = conversationHistory
 		request["session_id"] = nil
 	}
 
@@ -588,7 +538,7 @@ func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreamingAndHist
 
 	resp, err := agent.httpClient.Do(req)
 	if err != nil {
-		agent.logger.Error("HTTP request to agent-core failed", "error", err, "url", url)
+		agent.logger.Error("HTTP request to nodeoperator api failed", "error", err, "url", url)
 		return fmt.Errorf("connection failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -600,6 +550,11 @@ func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreamingAndHist
 	}
 
 	return agent.processStreamingResponseWithUpdates(resp.Body, updates)
+}
+
+func (agent *NodeOperatorAgent) processConversationWithAgentCoreStreamingAndHistory(ctx context.Context, userMessage string, conversationHistory []map[string]string, updates chan<- StreamingUpdate) error {
+	agent.logger.Info("Using nodeoperator api for real-time streaming with conversation history", "message", userMessage, "history_length", len(conversationHistory))
+	return agent.processConversationWithAgentCoreStreaming(ctx, userMessage, conversationHistory, updates)
 }
 
 func (agent *NodeOperatorAgent) ParseUpgradeIntent(ctx context.Context, userMessage string) (*UpgradeIntent, error) {

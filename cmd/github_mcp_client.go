@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/blockops-sh/ponos/config"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -65,6 +66,18 @@ type GitHubMCPClient struct {
 	connectMu      sync.Mutex
 
 	endpointCh chan string
+}
+
+func BuildGitHubMCPClient(cfg *config.Config, logger *slog.Logger) *GitHubMCPClient {
+	return NewGitHubMCPClient(
+		cfg.GitHubMCPURL,
+		cfg.GitHubToken,
+		cfg.GitHubAppID,
+		cfg.GitHubInstallID,
+		cfg.GitHubPEMKey,
+		cfg.GitHubBotName,
+		logger,
+	)
 }
 
 type MCPRequest struct {

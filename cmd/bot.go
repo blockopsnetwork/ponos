@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/blockops-sh/ponos/config"
 	"github.com/slack-go/slack"
@@ -51,6 +52,19 @@ type Bot struct {
 	mcpClient     *GitHubMCPClient
 	agent         *NodeOperatorAgent
 	githubHandler *GitHubDeployHandler
+}
+
+func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, agent *NodeOperatorAgent) *Bot {
+	mcpClient := BuildGitHubMCPClient(cfg, logger)
+	bot := &Bot{
+		client:    slackClient,
+		config:    cfg,
+		logger:    logger,
+		mcpClient: mcpClient,
+		agent:     agent,
+	}
+	bot.githubHandler = NewGitHubDeployHandler(logger, cfg, slackClient, agent, mcpClient)
+	return bot
 }
 
 type DiagnosticsResponse struct {
@@ -154,7 +168,7 @@ func (b *Bot) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 func (b *Bot) handleAppMention(event *slackevents.AppMentionEvent) {
 	userMessage := b.normalizeAppMentionText(event.Text)
 	if userMessage == "" {
-		text := fmt.Sprintf("Hi <@%s>, can you provide a request after mentioning me? For example: `@Ponos AI upgrade polkadot archive to the latest stable`.", event.User)
+		text := fmt.Sprintf("Hi <@%s>, can you provide a request after mentioning me? For example: `@Ponos AI upgrade ${network} ${chain} ${node type} to the desired ${version}`.", event.User)
 		b.postThreadedSlackMessage(event.Channel, event.TimeStamp, text)
 		return
 	}
@@ -163,22 +177,9 @@ func (b *Bot) handleAppMention(event *slackevents.AppMentionEvent) {
 }
 
 func (b *Bot) handleMessage(event *slackevents.MessageEvent) {
+	// disable bot-to-bot communication
 	if event.BotID != "" {
-		errorBlock := slack.NewTextBlockObject("mrkdwn",
-			":robot_face: *Bot-to-Bot Communication Not Supported*\n"+
-				"Sorry, but I don't talk to other bots yet. Let's wait for AGI! :wink:",
-			false, false)
-		msgBlock := slack.NewSectionBlock(errorBlock, nil, nil)
-
-		if _, _, err := b.client.PostMessage(
-			event.Channel,
-			slack.MsgOptionBlocks(msgBlock),
-		); err != nil {
-			b.logger.Error("error sending bot-to-bot error message",
-				"error", err,
-				"bot_id", event.BotID,
-				"channel", event.Channel)
-		}
+		b.logger.Info("ignoring bot message", "bot_id", event.BotID, "channel", event.Channel)
 		return
 	}
 
@@ -241,13 +242,6 @@ func (b *Bot) handleSlashCommand(w http.ResponseWriter, r *http.Request) {
 	var response *SlashCommandResponse
 
 	switch command {
-	case "/hello":
-		response = &SlashCommandResponse{
-			ResponseType: "in_channel",
-			Text:         fmt.Sprintf("Hello <@%s>! You said: %s", userID, text),
-		}
-	case DeployDashboardCmd, DeployAPICmd, DeployProxyCmd:
-		response = b.githubHandler.HandleDeploy(command, text, userID, channelID)
 	case UpdateNetworkCmd:
 		response = b.githubHandler.HandleChainUpdate("network", text, userID)
 	case "/diagnose":
@@ -255,7 +249,7 @@ func (b *Bot) handleSlashCommand(w http.ResponseWriter, r *http.Request) {
 	default:
 		response = &SlashCommandResponse{
 			ResponseType: "ephemeral",
-			Text:         fmt.Sprintf("Sorry, I don't know how to handle the command %s yet.", command),
+			Text:         "Unknown command",
 		}
 	}
 
@@ -377,6 +371,7 @@ func (b *Bot) sendReleaseSummaryFromAgent(channel string, payload ReleasesWebhoo
 			"summary", summary)
 	}
 }
+
 func (b *Bot) handleDiagnosticsCommand(text, userID, channelID string) *SlashCommandResponse {
 	service := strings.TrimSpace(text)
 	if service == "" {
@@ -387,7 +382,7 @@ func (b *Bot) handleDiagnosticsCommand(text, userID, channelID string) *SlashCom
 	}
 
 	if b.config.AgentCoreURL == "" {
-		b.logger.Error("Agent core URL is not configured")
+		b.logger.Error("Agent-core URL is not configured")
 		return &SlashCommandResponse{
 			ResponseType: "ephemeral",
 			Text:         "Agent-core URL is not configured. Please set AGENT_CORE_URL.",
@@ -402,6 +397,7 @@ func (b *Bot) handleDiagnosticsCommand(text, userID, channelID string) *SlashCom
 	go func() {
 		if err := b.triggerDiagnostics(service, channelID); err != nil {
 			b.logger.Error("Diagnostics failed", "service", service, "error", err)
+			b.postThreadedSlackMessage(channelID, "", fmt.Sprintf(":x: Diagnostics failed for *%s*: %v", service, err))
 		}
 	}()
 
@@ -409,6 +405,9 @@ func (b *Bot) handleDiagnosticsCommand(text, userID, channelID string) *SlashCom
 }
 
 func (b *Bot) triggerDiagnostics(service, channelID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
 	payload := map[string]string{
 		"service": service,
 	}
@@ -419,11 +418,12 @@ func (b *Bot) triggerDiagnostics(service, channelID string) error {
 	}
 
 	url := fmt.Sprintf("%s/diagnostics/run", b.config.AgentCoreURL)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create diagnostics request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -432,8 +432,8 @@ func (b *Bot) triggerDiagnostics(service, channelID string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("agent-core returned status %d: %s", resp.StatusCode, string(respBody))
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("nodeoperator api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
 	var diagResp DiagnosticsResponse
@@ -446,49 +446,69 @@ func (b *Bot) triggerDiagnostics(service, channelID string) error {
 		return fmt.Errorf("diagnostics service reported failure: %s", diagResp.Error)
 	}
 
-	messageBuilder := strings.Builder{}
-	messageBuilder.WriteString(fmt.Sprintf(":white_check_mark: Diagnostics completed for *%s*.\n", service))
-	if diagResp.Result.Summary != "" {
-		messageBuilder.WriteString("• Summary:\n")
-		messageBuilder.WriteString(diagResp.Result.Summary)
-		messageBuilder.WriteString("\n")
-	}
-	if diagResp.Result.Namespace != "" {
-		messageBuilder.WriteString(fmt.Sprintf("• Namespace: `%s`\n", diagResp.Result.Namespace))
-	}
-	if diagResp.Result.ResourceType != "" {
-		messageBuilder.WriteString(fmt.Sprintf("• Resource type: `%s`\n", diagResp.Result.ResourceType))
-	}
-	if diagResp.Result.IssueURL != "" {
-		messageBuilder.WriteString(fmt.Sprintf("• GitHub issue: %s\n", diagResp.Result.IssueURL))
-	}
-	if diagResp.Result.LogSnippet != "" {
-		messageBuilder.WriteString("• Log snapshot:\n")
-		messageBuilder.WriteString("```\n")
-		messageBuilder.WriteString(diagResp.Result.LogSnippet)
-		messageBuilder.WriteString("\n```\n")
-	}
-	if diagResp.Result.ResourceDescription != "" {
-		messageBuilder.WriteString("• Resource description added to GitHub issue.\n")
-	}
-	if diagResp.Result.EventsSummary != "" {
-		messageBuilder.WriteString("• Recent events captured in diagnostics issue.\n")
-	}
-	messageBuilder.WriteString("• Prompt:\n")
-	messageBuilder.WriteString("```")
-	messageBuilder.WriteString(diagResp.Result.Prompt)
-	messageBuilder.WriteString("```")
-
-	message := messageBuilder.String()
+	blocks := b.buildDiagnosticsBlocks(service, diagResp.Result)
 
 	if _, _, err := b.client.PostMessage(
 		channelID,
-		slack.MsgOptionText(message, false),
+		slack.MsgOptionBlocks(blocks...),
 	); err != nil {
-		b.logger.Error("Failed to post diagnostics result to Slack", "error", err)
+		return fmt.Errorf("failed to post diagnostics result to Slack: %w", err)
 	}
 
 	return nil
+}
+
+func (b *Bot) buildDiagnosticsBlocks(service string, result DiagnosticsResult) []slack.Block {
+	var fields []*slack.TextBlockObject
+
+	if result.Namespace != "" {
+		fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*Namespace:*\n`%s`", result.Namespace), false, false))
+	}
+	if result.ResourceType != "" {
+		fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*Resource:*\n`%s`", result.ResourceType), false, false))
+	}
+	if result.IssueURL != "" {
+		fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*GitHub issue:*\n<%s>", result.IssueURL), false, false))
+	}
+	if result.EventsSummary != "" {
+		fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*Events:*\n%s", result.EventsSummary), false, false))
+	}
+
+	blocks := []slack.Block{
+		slack.NewSectionBlock(
+			slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf(":white_check_mark: Diagnostics completed for *%s*.", service), false, false),
+			nil, nil),
+	}
+
+	if len(fields) > 0 {
+		blocks = append(blocks, slack.NewSectionBlock(nil, fields, nil))
+	}
+
+	if result.Summary != "" {
+		blocks = append(blocks, slack.NewSectionBlock(
+			slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*Summary:*\n%s", result.Summary), false, false),
+			nil, nil))
+	}
+
+	if result.LogSnippet != "" {
+		blocks = append(blocks, slack.NewSectionBlock(
+			slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*Log snapshot:*\n```\n%s\n```", result.LogSnippet), false, false),
+			nil, nil))
+	}
+
+	if result.ResourceDescription != "" {
+		blocks = append(blocks, slack.NewSectionBlock(
+			slack.NewTextBlockObject(slack.MarkdownType, "*Resource description was added to the GitHub issue.*", false, false),
+			nil, nil))
+	}
+
+	if result.Prompt != "" {
+		blocks = append(blocks, slack.NewSectionBlock(
+			slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*Prompt:*\n```\n%s\n```", result.Prompt), false, false),
+			nil, nil))
+	}
+
+	return blocks
 }
 
 func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, userMessage string) {
@@ -558,7 +578,13 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 		finalResponse = fmt.Sprintf("%s\n\n*Tool summary:*\n%s", finalResponse, strings.Join(toolSummaries, "\n"))
 	}
 
-	b.postThreadedSlackMessage(channel, threadTS, finalResponse)
+	blocks := []slack.Block{
+		slack.NewSectionBlock(
+			slack.NewTextBlockObject(slack.MarkdownType, finalResponse, false, false),
+			nil, nil),
+	}
+
+	b.postThreadedSlackBlocks(channel, threadTS, blocks)
 }
 
 func (b *Bot) normalizeAppMentionText(text string) string {
@@ -588,6 +614,19 @@ func (b *Bot) postThreadedSlackMessage(channel, threadTS, text string) {
 
 	if _, _, err := b.client.PostMessage(channel, opts...); err != nil {
 		b.logger.Error("failed to post Slack message", "error", err, "channel", channel)
+	}
+}
+
+func (b *Bot) postThreadedSlackBlocks(channel, threadTS string, blocks []slack.Block) {
+	if len(blocks) == 0 {
+		return
+	}
+	opts := []slack.MsgOption{slack.MsgOptionBlocks(blocks...)}
+	if threadTS != "" {
+		opts = append(opts, slack.MsgOptionTS(threadTS))
+	}
+	if _, _, err := b.client.PostMessage(channel, opts...); err != nil {
+		b.logger.Error("failed to post Slack blocks", "error", err, "channel", channel)
 	}
 }
 
