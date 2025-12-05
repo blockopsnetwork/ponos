@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 type DockerOperations struct{}
@@ -59,7 +60,14 @@ func (d *DockerOperations) fetchLatestTagFromNodeReleases(network, client string
 	}
 	releasesURL.RawQuery = query.Encode()
 
-	resp, err := http.Get(releasesURL.String())
+	req, err := http.NewRequestWithContext(ctxWithTimeout(), http.MethodGet, releasesURL.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "Ponos/1.0")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -112,4 +120,9 @@ func (d *DockerOperations) extractImageReposWithLLM(ctx context.Context, agent A
 
 	yamlOps := NewYAMLOperations()
 	return yamlOps.ExtractImageReposFromYAML(yamlContent)
+}
+
+func ctxWithTimeout() context.Context {
+	ctx, _ := context.WithTimeout(context.Background(), 15*time.Second)
+	return ctx
 }

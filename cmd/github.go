@@ -13,13 +13,7 @@ import (
 )
 
 const (
-	DeployDashboardCmd = "/deploy-dashboard"
-	DeployAPICmd       = "/deploy-api"
-	DeployProxyCmd     = "/deploy-proxy"
-	UpdateNetworkCmd   = "/update-network"
-
-	DashboardRepo = "blockops-sh/user-dashboard-client-v2"
-	APIRepo       = "blockops-sh/api-core-service"
+	UpdateNetworkCmd = "/update-network"
 )
 
 type RepoConfig struct {
@@ -99,63 +93,14 @@ type NetworkUpdateResult struct {
 
 func NewGitHubDeployHandler(logger *slog.Logger, cfg *config.Config, slackClient SlackClient, agent AgentClient, mcpClient *GitHubMCPClient) *GitHubDeployHandler {
 	return &GitHubDeployHandler{
-		logger:    logger,
-		config:    cfg,
-		slack:     slackClient,
-		agent:     agent,
-		mcpClient: mcpClient,
-		docker:    NewDockerOperations(),
-		yaml:      NewYAMLOperations(),
-		repoConfigs: map[string]RepoConfig{
-			DeployDashboardCmd: {
-				Name:          DashboardRepo,
-				DefaultBranch: "main",
-				SourceBranch:  "development",
-			},
-			DeployAPICmd: {
-				Name:          APIRepo,
-				DefaultBranch: "main",
-				SourceBranch:  "development",
-			},
-		},
-	}
-}
-
-func (h *GitHubDeployHandler) HandleDeploy(command, text, userID, channelID string) *SlashCommandResponse {
-	params := strings.Fields(text)
-	if len(params) < 3 {
-		return &SlashCommandResponse{
-			ResponseType: "ephemeral",
-			Text:         "Usage: " + command + " <branch> <environment> <service>",
-		}
-	}
-
-	branch := params[0]
-	environment := params[1]
-	service := params[2]
-
-	if _, exists := h.repoConfigs[command]; !exists {
-		return &SlashCommandResponse{
-			ResponseType: "ephemeral",
-			Text:         "Unknown deployment command: " + command,
-		}
-	}
-
-	go h.startDeployment(service, branch, environment, userID, channelID)
-
-	return &SlashCommandResponse{
-		ResponseType: "in_channel",
-		Blocks:       createDeploymentStartBlocks(service, branch, environment, userID),
-	}
-}
-
-func (h *GitHubDeployHandler) startDeployment(service, branch, environment, userID, channelID string) {
-	blocks := createSuccessBlocks("Deployment completed!",
-		fmt.Sprintf("*Service:* %s\n*Branch:* %s\n*Environment:* %s\n*Deployed by:* <@%s>",
-			service, branch, environment, userID))
-
-	if _, _, err := h.slack.PostMessage(channelID, slack.MsgOptionBlocks(blocks...)); err != nil {
-		h.logger.Error("failed to send deployment success message", "error", err, "channel", channelID)
+		logger:      logger,
+		config:      cfg,
+		slack:       slackClient,
+		agent:       agent,
+		mcpClient:   mcpClient,
+		docker:      NewDockerOperations(),
+		yaml:        NewYAMLOperations(),
+		repoConfigs: map[string]RepoConfig{},
 	}
 }
 
@@ -217,8 +162,8 @@ func (h *GitHubDeployHandler) startNetworkUpdate(network, updateType, userID str
 	}
 
 	h.logger.Info("Network update PR created with AI analysis", "url", prURL, "network", network)
-	// Note: sendReleaseSummaryFromAgent is in bot.go and depends on Bot. 
-	// We might need to move it or duplicate logic. 
+	// Note: sendReleaseSummaryFromAgent is in bot.go and depends on Bot.
+	// We might need to move it or duplicate logic.
 	// For now, let's assume we can't call it directly on 'h.bot' anymore.
 	// We should probably inject a 'Notifier' interface or similar.
 	// But to keep it simple, I'll just post the message here using slack client directly or skip the fancy blocks for now.
@@ -343,6 +288,10 @@ func (h *GitHubDeployHandler) agentUpdatePR(ctx context.Context, payload Release
 	}
 
 	title, body, commitMessage := BuildPRContent(repo.NetworkName, dockerTag, h.mcpClient.botName, summary, releaseDetails)
+	if strings.TrimSpace(body) == "" {
+		h.logger.Warn("LLM analysis missing; using fallback PR body", "network", repo.NetworkName, "tag", dockerTag)
+		body = fmt.Sprintf("Automated update for %s to %s. No additional analysis provided.", repo.NetworkName, dockerTag)
+	}
 
 	req := NetworkUpdateRequest{
 		DetectedNetworks: []string{strings.ToLower(repo.NetworkName)},

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,44 +24,49 @@ func runServer() {
 		os.Exit(1)
 	}
 
-	// Validate GitHub bot configuration
+	// validate github auth
 	if err := cfg.ValidateGitHubBotConfig(); err != nil {
-		logger.Error("GitHub bot configuration error", "error", err)
-		logger.Info("See config/config.go for setup instructions")
+		logger.Error("GitHub auth not configured", "error", err)
+		logger.Info("Set either GITHUB_TOKEN (PAT) or GITHUB_APP_ID/GITHUB_INSTALL_ID/GITHUB_PEM_KEY (App). See config/config.go.")
 		os.Exit(1)
+	}
+
+	if strings.TrimSpace(cfg.SlackToken) == "" || strings.TrimSpace(cfg.SlackSigningKey) == "" {
+		logger.Error("Slack configuration missing", "has_token", cfg.SlackToken != "", "has_signing_key", cfg.SlackSigningKey != "")
+		os.Exit(1)
+	}
+
+	if strings.TrimSpace(cfg.AgentCoreURL) == "" {
+		logger.Error("nodeoperator api URL is not configured; set AGENT_CORE_URL")
+		os.Exit(1)
+	}
+
+	if strings.TrimSpace(cfg.GitHubMCPURL) == "" {
+		logger.Warn("GITHUB_MCP_URL is empty; GitHub MCP calls may fail", "github_mcp_url", cfg.GitHubMCPURL)
 	}
 
 	api := slack.New(cfg.SlackToken)
 
-	mcpClient := NewGitHubMCPClient(
-		cfg.GitHubMCPURL,
-		cfg.GitHubToken,
-		cfg.GitHubAppID,
-		cfg.GitHubInstallID,
-		cfg.GitHubPEMKey,
-		cfg.GitHubBotName,
-		logger,
-	)
-
 	agent, err := NewNodeOperatorAgent(logger)
 	if err != nil {
-		logger.Warn("failed to create AI agent", "error", err)
+		logger.Warn("failed to create nodeoperator agent", "error", err)
 		agent = nil
 	}
 
-	bot := &Bot{
-		client:    api,
-		config:    cfg,
-		logger:    logger,
-		mcpClient: mcpClient,
-		agent:     agent,
+	bot := NewBot(cfg, logger, api, agent)
+
+	// TODO: For complete separattion of concerns and to ease the pain of users having to setup ngrok for webhook listeners, the whole server logic should be moved to the api backend
+	if cfg.EnableReleaseListener {
+		webhookHandler := NewWebhookHandler(bot)
+		http.HandleFunc("/webhooks/releases", webhookHandler.handleReleasesWebhook)
+		logger.Info("release listener enabled", "path", "/webhooks/releases")
+	} else {
+		logger.Info("release listener disabled; set ENABLE_RELEASE_LISTENER=true to enable")
 	}
-	bot.githubHandler = NewGitHubDeployHandler(logger, cfg, api, agent, mcpClient)
-	webhookHandler := NewWebhookHandler(bot)
 
 	http.HandleFunc("/slack/events", bot.handleSlackEvents)
 	http.HandleFunc("/slack/command", bot.handleSlashCommand)
-	http.HandleFunc("/webhooks/releases", webhookHandler.handleReleasesWebhook)
+	// TODO: not appropiate here, move to api backend
 	http.HandleFunc("/mcp/github", bot.handleGitHubMCP)
 
 	srv := &http.Server{
