@@ -126,7 +126,7 @@ func (h *GitHubDeployHandler) startNetworkUpdate(network, updateType, userID str
 	ctx := context.Background()
 
 	if h.agent == nil {
-		h.notifyError(h.config.SlackChannel, "AI agent not available for network updates")
+		h.notifyError(h.config.SlackChannel, "Nodeoperator agent not available for network updates")
 		return
 	}
 
