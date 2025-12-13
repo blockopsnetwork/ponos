@@ -1,0 +1,20 @@
+name: Enforce SemVer Tags
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  SemVer-Check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if tag is SemVer compliant
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          if [[ "${TAG_NAME}" =~ ^(.+\/)*v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$ ]]; then
+            echo "Tag $TAG_NAME is SemVer compliant"
+          else
+            echo "Tag $TAG_NAME is not SemVer compliant"
+            exit 1
+          fi
