@@ -1,0 +1,165 @@
+version: 2
+
+project_name: ponos
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: ponos
+    main: ./cmd
+    binary: ponos
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+      - -X main.builtBy=goreleaser
+
+archives:
+  - id: ponos-archive
+    builds:
+      - ponos
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - README.md
+      - LICENSE*
+      - CHANGELOG.md
+      - docs/*
+      - repo-config.yaml.example
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+      - "^style:"
+      - "^refactor:"
+      - "merge conflict"
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: 'Bug fixes'
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: 'Performance improvements'
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: blockopsnetwork
+    name: ponos
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## Ponos {{ .Tag }} ({{ .Date }})
+
+    Ponos is the interface for nodeoperator.ai, the intelligent nodeoperator agent for managing blockchain nodes.
+  
+    
+    This interface provides support for the following integrations:
+    - TUI
+    - Slack
+  footer: |
+    ## Installation
+    
+    ### Binary Installation
+    Download the appropriate binary for your platform from the assets above.
+    
+    ### Docker
+    ```bash
+    docker pull blockopsnetwork/ponos-server:{{ .Tag }}
+    ```
+    
+    ### Configuration
+    See the [main repository](https://github.com/blockopsnetwork/ponos) for complete setup instructions.
+    
+    ---
+    
+    **Full Changelog**: https://github.com/blockopsnetwork/ponos/compare/{{ .PreviousTag }}...{{ .Tag }}
+    
+    Released by [GoReleaser](https://github.com/goreleaser/goreleaser).
+
+dockers:
+  - image_templates:
+      - "blockopsnetwork/ponos-server:{{ .Tag }}"
+      - "blockopsnetwork/ponos-server:latest"
+    dockerfile: Dockerfile.goreleaser
+    extra_files:
+      - repo-config.yaml.example
+
+brews:
+  - name: ponos
+    repository:
+      owner: blockopsnetwork
+      name: homebrew-tools
+    homepage: "https://github.com/blockopsnetwork/ponos"
+    description: "Ponos is the interface for nodeoperator.ai, the intelligent nodeoperator agent for managing blockchain nodes."
+    license: "MIT"
+    skip_upload: auto
+    dependencies:
+      - name: git
+    install: |
+      bin.install "ponos"
+    test: |
+      system "#{bin}/ponos", "--version"
+
+nfpms:
+  - id: ponos-packages
+    package_name: ponos
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: BlockOps
+    homepage: https://github.com/blockopsnetwork/ponos
+    maintainer: BlockOps Team <agent@nodeoperator.ai>
+    description: |-
+      Ponos is the interface for nodeoperator.ai, the intelligent nodeoperator agent for managing blockchain nodes.
+      This interface provides support for the following integrations:
+      - TUI
+      - Slack
+    license: MIT
+    formats:
+      - apk
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: ./repo-config.yaml.example
+        dst: /etc/ponos/repo-config.yaml
+        type: "config|noreplace"
+        file_info:
+          mode: 0644
