@@ -1,0 +1,37 @@
+name: Build & Push Docker Images to Public Registry 
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git tag to build, tag, and push docker image'
+        required: true
+        type: string
+
+env:
+  GO_VERSION: "1.27"
+  CONTAINER_REGISTRY: ghcr.io/blockopsnetwork
+
+jobs:   
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Build Docker Image
+        run: make docker-buildx CONTAINER_REGISTRY=${CONTAINER_REGISTRY} IMAGE_TAG=${{ inputs.tag }}
+
+      - name: Push Docker Image
+        run: make docker-pushx CONTAINER_REGISTRY=${CONTAINER_REGISTRY} IMAGE_TAG=${{ inputs.tag }}
+        
+  push:
+    name: Push Docker Image
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Push Docker Image
+        run: make docker-pushx CONTAINER_REGISTRY=${CONTAINER_REGISTRY} IMAGE_TAG=${{ inputs.tag }}
+
+      - name: Execute docker-pushx command to push images
+        run: make docker-pushx CONTAINER_REGISTRY=${CONTAINER_REGISTRY} IMAGE_TAG=${{ inputs.tag }}
