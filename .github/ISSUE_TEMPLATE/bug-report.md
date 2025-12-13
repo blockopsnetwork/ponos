@@ -40,7 +40,7 @@ If applicable, add screenshots to help explain your problem.
 ## Specifications
 
 - System: (e.g. macOS 10.13.4, Linux)
-- Go: (e.g. 1.13)
+- Go: (e.g. 1.27)
 
 ## Additional context
 
