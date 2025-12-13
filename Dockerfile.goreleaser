@@ -1,0 +1,17 @@
+# Dockerfile for GoReleaser
+# This uses the pre-built binary from GoReleaser instead of building from source
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+# Copy the pre-built binary from GoReleaser build context
+COPY ponos /ponos
+
+# Copy the configuration example
+COPY repo-config.yaml.example /etc/ponos/repo-config.yaml.example
+
+USER nonroot:nonroot
+
+EXPOSE 8080
+
+ENTRYPOINT ["/ponos"]
+CMD ["server"]
