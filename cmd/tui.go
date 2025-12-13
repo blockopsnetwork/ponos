@@ -112,6 +112,9 @@ type tuiModel struct {
 	helperVisible   bool
 	helperSelected  int
 	filteredHelpers []HelperCommand
+
+	// autoScroll controls whether new messages jump to bottom; disabled when user scrolls manually.
+	autoScroll bool
 }
 
 type HelperCommand struct {
@@ -166,6 +169,7 @@ func (tui *PonosAgentTUI) Start() error {
 	p := tea.NewProgram(
 		&model,
 		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
 	)
 
 	model.program = p
@@ -219,6 +223,7 @@ func (tui *PonosAgentTUI) initModel() tuiModel {
 		currentDir:          cwd,
 		showHelp:            true,
 		filteredHelpers:     helperCommands,
+		autoScroll:          true,
 	}
 
 	return m
@@ -245,31 +250,31 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		if !m.ready {
-			logoHeight := 10
-			titleHeight := 4
+			logoHeight := 8
+			titleHeight := 2
 			loadingHeight := 1
 			helpHeight := 1
-			inputHeight := 4
-			spacingHeight := 3
+			inputHeight := 3
+			spacingHeight := 2
 
 			messageHeight := msg.Height - logoHeight - titleHeight - loadingHeight - inputHeight - helpHeight - spacingHeight
-			if messageHeight < 3 {
-				messageHeight = 3
+			if messageHeight < 10 {
+				messageHeight = 10
 			}
 
 			m.viewport = viewport.New(msg.Width, messageHeight)
 			m.textarea.SetWidth(msg.Width - 4)
 			m.ready = true
 		} else {
-			logoHeight := 10
-			titleHeight := 4
+			logoHeight := 8
+			titleHeight := 2
 			loadingHeight := 1
 			helpHeight := 1
-			inputHeight := 4
-			spacingHeight := 3
+			inputHeight := 3
+			spacingHeight := 2
 			messageHeight := msg.Height - logoHeight - titleHeight - loadingHeight - inputHeight - helpHeight - spacingHeight
-			if messageHeight < 3 {
-				messageHeight = 3
+			if messageHeight < 10 {
+				messageHeight = 10
 			}
 
 			m.viewport.Width = msg.Width
@@ -282,6 +287,37 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if m.handleHelperNavigation(msg) {
+			return m, nil
+		}
+
+		switch msg.String() {
+		case "up", "k":
+			m.viewport.ScrollUp(1)
+			m.autoScroll = false
+			return m, nil
+		case "down", "j":
+			m.viewport.ScrollDown(1)
+			if m.viewport.AtBottom() {
+				m.autoScroll = true
+			}
+			return m, nil
+		case "pgup", "ctrl+u":
+			m.viewport.HalfPageUp()
+			m.autoScroll = false
+			return m, nil
+		case "pgdown", "ctrl+d":
+			m.viewport.HalfPageDown()
+			if m.viewport.AtBottom() {
+				m.autoScroll = true
+			}
+			return m, nil
+		case "home", "g":
+			m.viewport.GotoTop()
+			m.autoScroll = false
+			return m, nil
+		case "end", "G":
+			m.viewport.GotoBottom()
+			m.autoScroll = true
 			return m, nil
 		}
 
@@ -367,76 +403,84 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loading = true
 				m.loadingMsg = "Ponos thinking..."
 				m.animationFrame = 0
+				m.autoScroll = true
 				m.updateViewportContent()
 
 				ctx, cancel := context.WithCancel(context.Background())
 				m.cancelThinking = cancel
 
-				program := m.program
 				go func() {
-					animFrame := 0
-					for {
-						if !m.loading {
-							break
+					defer func() {
+						if m.program != nil {
+							m.program.Send(tea.Msg("loading_done"))
 						}
-						time.Sleep(150 * time.Millisecond)
-						if program != nil && m.loading {
-							program.Send(animationUpdate{frame: animFrame})
-							animFrame++
-						}
-					}
-				}()
-
-				go func() {
-					m.tui.logger.Info("Starting streaming processing", "input", userInput)
+					}()
 
 					updates := make(chan StreamingUpdate, 10)
-
 					go func() {
 						defer close(updates)
 						err := m.tui.handleUserInputWithStreaming(ctx, userInput, m.conversationHistory, updates)
 						if err != nil {
-							m.tui.logger.Error("Streaming processing failed", "error", err)
-							if program != nil {
-								program.Send(msgResponse{content: "", err: err})
-							}
+							m.tui.logger.Error("Error handling user input", "error", err)
 						}
 					}()
 
 					var finalResponse string
 					for update := range updates {
-						select {
-						case <-ctx.Done():
-							m.tui.logger.Info("Processing cancelled")
+						if m.program == nil {
+							continue
+						}
+						if ctx.Err() != nil {
 							return
-						default:
 						}
 
-						if program != nil {
-							switch update.Type {
-							case "thinking":
-								program.Send(streamingUpdate{update: update})
-							case "tool_start":
-								program.Send(streamingUpdate{update: update})
-							case "tool_result":
-								program.Send(streamingUpdate{update: update})
-							case "assistant":
-								finalResponse = update.Message
-							case "complete":
-								program.Send(msgResponse{content: finalResponse, err: nil})
-								return
-							}
+						switch update.Type {
+						case "thinking":
+							m.program.Send(streamingUpdate{update: update})
+						case "assistant":
+							m.program.Send(streamingUpdate{update: update})
+						case "tool_call":
+							m.program.Send(streamingUpdate{update: update})
+						case "complete":
+							finalResponse = update.Message
+						default:
+							m.program.Send(streamingUpdate{update: update})
 						}
 					}
 
-					if finalResponse != "" && program != nil {
-						program.Send(msgResponse{content: finalResponse, err: nil})
+					if finalResponse != "" && ctx.Err() == nil {
+						m.conversationHistory = append(m.conversationHistory, map[string]string{
+							"role":    "assistant",
+							"content": finalResponse,
+						})
 					}
 				}()
 
 				return m, nil
 			}
 		}
+
+		m.textarea, cmd = m.textarea.Update(msg)
+		cmds = append(cmds, cmd)
+		m.updateHelperDropdown()
+
+	case tea.MouseMsg:
+		// Only handle wheel events for scrolling, let other mouse events pass through
+		if msg.Action == tea.MouseActionPress {
+			if msg.Button == tea.MouseButtonWheelUp {
+				m.viewport.ScrollUp(3)
+				m.autoScroll = false
+				return m, nil
+			}
+			if msg.Button == tea.MouseButtonWheelDown {
+				m.viewport.ScrollDown(3)
+				if m.viewport.AtBottom() {
+					m.autoScroll = true
+				}
+				return m, nil
+			}
+		}
+		// Let other mouse events (selection, clicks) pass through to terminal
 
 	case msgResponse:
 		m.loading = false
@@ -582,10 +626,6 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	}
 
-	m.textarea, cmd = m.textarea.Update(msg)
-	cmds = append(cmds, cmd)
-	m.updateHelperDropdown()
-
 	m.viewport, cmd = m.viewport.Update(msg)
 	cmds = append(cmds, cmd)
 
@@ -675,7 +715,16 @@ func (m *tuiModel) getAnimatedIndicator() string {
 
 func (m *tuiModel) updateViewportContent() {
 	var content strings.Builder
-	maxWidth := m.viewport.Width - 2 // Leave some padding
+	maxWidth := m.viewport.Width - 4
+	if maxWidth < 20 {
+		maxWidth = 80
+	}
+	
+	if len(m.messages) == 0 {
+		content.WriteString("No messages yet. Type a message below to start.\n")
+		m.viewport.SetContent(content.String())
+		return
+	}
 
 	for _, msg := range m.messages {
 		var prefix, text string
@@ -703,20 +752,21 @@ func (m *tuiModel) updateViewportContent() {
 			text = msg.Content
 			style = errorMessageStyle
 		case "tool_header":
-			prefix = "● "
-			text = msg.Content
-			style = lipgloss.NewStyle().Foreground(brandColor).Bold(true)
+			prefix = ""
+			text = getToolContextualMessage(msg.Content)
+			style = lipgloss.NewStyle().Foreground(brandColor).Bold(false)
 		case "tool_result":
 			parts := strings.Split(msg.Content, "|")
 			toolName := parts[0]
 			success := len(parts) > 1 && parts[1] == "true"
+			friendlyName := getToolCompletionMessage(toolName, success)
 			if success {
-				prefix = "  └ "
-				text = fmt.Sprintf("%s completed successfully", toolName)
+				prefix = "✓ "
+				text = friendlyName
 				style = lipgloss.NewStyle().Foreground(successColor)
 			} else {
-				prefix = "  └ "
-				text = fmt.Sprintf("%s failed", toolName)
+				prefix = "✗ "
+				text = friendlyName
 				style = lipgloss.NewStyle().Foreground(errorColor)
 			}
 		case "activity":
@@ -734,7 +784,10 @@ func (m *tuiModel) updateViewportContent() {
 	}
 
 	m.viewport.SetContent(content.String())
-	m.viewport.GotoBottom()
+	
+	if m.autoScroll || m.isStreaming {
+		m.viewport.GotoBottom()
+	}
 }
 
 func (tui *PonosAgentTUI) getHelpText() string {
@@ -746,6 +799,14 @@ Slash Commands
 • /help      Show detailed help and shortcuts
 • /status    Show configured tokens and working directory
 • /clear     Clear chat history
+
+Scrolling
+• ↑/k        Scroll up one line
+• ↓/j        Scroll down one line
+• PgUp/Ctrl+U  Scroll up half page
+• PgDn/Ctrl+D  Scroll down half page
+• Home/g     Go to top
+• End/G      Go to bottom
 
 Tips
 • Type / to open the helper menu, use ↑/↓ to pick a command, press Tab to autocomplete
@@ -838,7 +899,7 @@ func (tui *PonosAgentTUI) handleUpgradeRequest(ctx context.Context, intent *Upgr
 			userMessage := fmt.Sprintf("upgrade %s to latest", intent.Network)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			
+
 			err := tui.bot.StreamConversation(ctx, userMessage, nil, updates)
 			if err != nil {
 				tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: fmt.Sprintf("❌ Failed to process upgrade request: %v", err)})
@@ -864,6 +925,7 @@ func (tui *PonosAgentTUI) safeSendUpdate(updates chan<- StreamingUpdate, update 
 		tui.logger.Warn("Update channel blocked or closed", "update", update.Type)
 	}
 }
+
 
 func (m *tuiModel) renderTodoSection() string {
 	if len(m.currentTodos) == 0 {
@@ -1073,27 +1135,126 @@ func (m *tuiModel) renderHelperDropdown() string {
 		Render(panel)
 }
 
+func getToolContextualMessage(toolName string) string {
+	contextMessages := map[string]string{
+		"upgrade_blockchain_client": "Starting the node upgrade process...",
+		"create_pull_request":       "Creating a pull request with the changes...", 
+		"update_network_images":     "Updating container images across the network...",
+		"fetch_github_content":      "Fetching the latest configuration from GitHub...",
+		"update_deployment_files":   "Updating deployment configuration files...",
+		"run_network_diagnostics":   "Running diagnostics to check network health...",
+		"validate_configuration":    "Validating the configuration settings...",
+		"backup_current_state":      "Creating a backup of the current state...",
+		"rollback_changes":          "Rolling back to the previous configuration...",
+		"verify_upgrade_success":    "Verifying the upgrade completed successfully...",
+	}
+	
+	if message, exists := contextMessages[toolName]; exists {
+		return message
+	}
+	
+	// Fallback: create a contextual message from the tool name
+	friendlyName := strings.ReplaceAll(toolName, "_", " ")
+	return fmt.Sprintf("Working on %s...", friendlyName)
+}
+
+func getToolCompletionMessage(toolName string, success bool) string {
+	if success {
+		successMessages := map[string]string{
+			"upgrade_blockchain_client": "Node upgrade completed successfully",
+			"create_pull_request":       "Pull request created successfully", 
+			"update_network_images":     "Container images updated across the network",
+			"fetch_github_content":      "Configuration fetched from GitHub",
+			"update_deployment_files":   "Deployment configuration updated",
+			"run_network_diagnostics":   "Network diagnostics completed - all systems healthy",
+			"validate_configuration":    "Configuration validation passed",
+			"backup_current_state":      "Current state backed up successfully",
+			"rollback_changes":          "Successfully rolled back to previous configuration",
+			"verify_upgrade_success":    "Upgrade verification completed successfully",
+		}
+		
+		if message, exists := successMessages[toolName]; exists {
+			return message
+		}
+		
+		// Fallback
+		friendlyName := strings.ReplaceAll(toolName, "_", " ")
+		return fmt.Sprintf("%s completed successfully", strings.Title(friendlyName))
+	} else {
+		failureMessages := map[string]string{
+			"upgrade_blockchain_client": "Node upgrade failed - please check the logs",
+			"create_pull_request":       "Failed to create pull request", 
+			"update_network_images":     "Failed to update container images",
+			"fetch_github_content":      "Failed to fetch configuration from GitHub",
+			"update_deployment_files":   "Failed to update deployment configuration",
+			"run_network_diagnostics":   "Network diagnostics failed - issues detected",
+			"validate_configuration":    "Configuration validation failed",
+			"backup_current_state":      "Failed to backup current state",
+			"rollback_changes":          "Failed to rollback changes",
+			"verify_upgrade_success":    "Upgrade verification failed",
+		}
+		
+		if message, exists := failureMessages[toolName]; exists {
+			return message
+		}
+		
+		// Fallback
+		friendlyName := strings.ReplaceAll(toolName, "_", " ")
+		return fmt.Sprintf("%s failed", strings.Title(friendlyName))
+	}
+}
+
 func wrapText(text string, width int) string {
 	if width <= 0 {
 		return text
 	}
 
 	var result strings.Builder
-	words := strings.Fields(text)
-	if len(words) == 0 {
-		return text
-	}
+	lines := strings.Split(text, "\n")
+	
+	for i, line := range lines {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+		
+		if len(line) <= width {
+			result.WriteString(line)
+			continue
+		}
+		
+		words := strings.Fields(line)
+		if len(words) == 0 {
+			result.WriteString(line)
+			continue
+		}
 
-	currentLine := words[0]
-	for _, word := range words[1:] {
-		if len(currentLine)+1+len(word) <= width {
-			currentLine += " " + word
-		} else {
-			result.WriteString(currentLine + "\n")
-			currentLine = word
+		currentLine := ""
+		for _, word := range words {
+			if len(word) > width {
+				if currentLine != "" {
+					result.WriteString(currentLine + "\n")
+					currentLine = ""
+				}
+				for len(word) > width {
+					result.WriteString(word[:width] + "\n")
+					word = word[width:]
+				}
+				if word != "" {
+					currentLine = word
+				}
+			} else if currentLine == "" {
+				currentLine = word
+			} else if len(currentLine)+1+len(word) <= width {
+				currentLine += " " + word
+			} else {
+				result.WriteString(currentLine + "\n")
+				currentLine = word
+			}
+		}
+		if currentLine != "" {
+			result.WriteString(currentLine)
 		}
 	}
-	result.WriteString(currentLine)
 
 	return result.String()
 }

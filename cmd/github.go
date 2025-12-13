@@ -128,7 +128,7 @@ func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req Netwo
 	owner := filesToCommit[0].owner
 	repo := filesToCommit[0].repo
 
-	branchName := fmt.Sprintf("%s-%d", req.BranchPrefix, time.Now().Unix())
+	branchName := h.generateBranchName(req, filesToCommit[0])
 	err = h.mcpClient.CreateBranch(ctx, owner, repo, branchName)
 	if err != nil {
 		return result, fmt.Errorf("failed to create branch: %v", err)
@@ -218,7 +218,6 @@ func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesTo
 			continue
 		}
 
-		// If we have a release tag, extract images and build the imageToTag map for this file
 		currentImageToTag := imageToTag
 		if releaseTag != "" {
 			images, err := h.agent.ExtractImages(ctx, content)
@@ -240,7 +239,6 @@ func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesTo
 			continue
 		}
 
-		// Track upgrades for this file
 		fileUpgrades := h.trackImageUpgrades(content, currentImageToTag, f.path)
 		upgrades = append(upgrades, fileUpgrades...)
 
@@ -273,7 +271,6 @@ func (h *GitHubDeployHandler) trackImageUpgrades(yamlContent string, imageToTag 
 	// Extract current images from YAML
 	currentImages := h.yaml.ExtractImageReposFromYAML(yamlContent)
 	
-	// Track what will be upgraded
 	for _, img := range currentImages {
 		if strings.Contains(img, ":") {
 			repo := img[:strings.Index(img, ":")]
@@ -293,3 +290,18 @@ func (h *GitHubDeployHandler) trackImageUpgrades(yamlContent string, imageToTag 
 	return upgrades
 }
 
+func (h *GitHubDeployHandler) generateBranchName(req NetworkUpdateRequest, fileCommit fileCommitData) string {
+	networkName := "network"
+	if len(req.DetectedNetworks) > 0 {
+		networkName = req.DetectedNetworks[0]
+	}
+	
+	cleanTag := strings.ReplaceAll(req.ReleaseTag, ".", "-")
+	cleanTag = strings.ReplaceAll(cleanTag, ":", "-")
+	cleanTag = strings.TrimPrefix(cleanTag, "v")
+	
+	branchName := fmt.Sprintf("upgrade/%s-to-%s", networkName, cleanTag)
+	
+	timestamp := time.Now().Unix()
+	return fmt.Sprintf("%s-%d", branchName, timestamp)
+}
