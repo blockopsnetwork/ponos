@@ -131,7 +131,7 @@ brews:
     homepage: "https://github.com/blockopsnetwork/ponos"
     description: "Ponos is the interface for nodeoperator.ai, the intelligent nodeoperator agent for managing blockchain nodes."
     license: "MIT"
-    skip_upload: auto
+    skip_upload: true  # Skip until homebrew-tools repo is created
     dependencies:
       - name: git
     install: |
