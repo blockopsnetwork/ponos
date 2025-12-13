@@ -47,13 +47,7 @@ func runServer() {
 
 	api := slack.New(cfg.SlackToken)
 
-	agent, err := NewNodeOperatorAgent(logger)
-	if err != nil {
-		logger.Warn("failed to create nodeoperator agent", "error", err)
-		agent = nil
-	}
-
-	bot := NewBot(cfg, logger, api, agent)
+	bot := NewBot(cfg, logger, api)
 
 	// TODO: For complete separattion of concerns and to ease the pain of users having to setup ngrok for webhook listeners, the whole server logic should be moved to the api backend
 	if cfg.EnableReleaseListener {

@@ -83,15 +83,7 @@ func runAgentTUI() {
 
 	api := slack.New(cfg.SlackToken)
 
-	agent, err := NewNodeOperatorAgent(logger)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to instantiate agent: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Please check your nodeoperator api service configuration (API Key, URL, etc.)\n")
-		logger.Error("failed to instantiate nodeoperator api client", "error", err)
-		os.Exit(1)
-	}
-
-	bot := NewBot(cfg, logger, api, agent)
+	bot := NewBot(cfg, logger, api)
 
 	tui := NewPonosAgentTUI(bot, logger)
 	tui.Start()

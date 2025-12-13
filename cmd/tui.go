@@ -772,7 +772,7 @@ func (tui *PonosAgentTUI) getStatusText() string {
 		status += "Slack Token missing\n"
 	}
 
-	if tui.bot.agent != nil {
+	if tui.bot.agentCoreURL != "" {
 		status += "llm available\n"
 	} else {
 		status += "llm unavailable (check OPENAI_API_KEY)\n"
@@ -805,7 +805,7 @@ func (tui *PonosAgentTUI) handleUserInputWithStreaming(ctx context.Context, inpu
 		return nil
 	}
 
-	if tui.bot.agent == nil {
+	if tui.bot.agentCoreURL == "" {
 		tui.logger.Error("Agent-core not available")
 		updates <- StreamingUpdate{Type: "assistant", Message: "Sorry, the nodeoperator api is not available. Please ensure the api is running and accessible."}
 		updates <- StreamingUpdate{Type: "complete", Message: "Done"}
@@ -813,7 +813,7 @@ func (tui *PonosAgentTUI) handleUserInputWithStreaming(ctx context.Context, inpu
 	}
 
 	tui.logger.Info("Sending user prompt directly to nodeoperator api", "input", input)
-	return tui.bot.agent.ProcessConversationWithStreamingAndHistory(ctx, input, conversationHistory, updates)
+	return tui.bot.StreamConversation(ctx, input, conversationHistory, updates)
 }
 
 func (tui *PonosAgentTUI) handleUpgradeRequest(ctx context.Context, intent *UpgradeIntent, updates chan<- StreamingUpdate) error {
@@ -834,20 +834,17 @@ func (tui *PonosAgentTUI) handleUpgradeRequest(ctx context.Context, intent *Upgr
 			tui.safeSendUpdate(updates, StreamingUpdate{Type: "complete", Message: "Done"})
 		}()
 
-		if tui.bot.githubHandler != nil {
-			response := tui.bot.githubHandler.HandleChainUpdate("network", intent.Network, "tui-user")
-
-			if response != nil {
-				if len(response.Blocks) > 0 {
-					tui.safeSendUpdate(updates, StreamingUpdate{Type: "activity", Message: "Network update process initiated via GitHub workflow."})
-				} else if response.Text != "" {
-					tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: response.Text})
-				}
-			} else {
-				tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: "❌ Failed to initiate network upgrade. Check logs for details."})
+		if tui.bot.agentCoreURL != "" {
+			userMessage := fmt.Sprintf("upgrade %s to latest", intent.Network)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			
+			err := tui.bot.StreamConversation(ctx, userMessage, nil, updates)
+			if err != nil {
+				tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: fmt.Sprintf("❌ Failed to process upgrade request: %v", err)})
 			}
 		} else {
-			tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: "❌ GitHub handler not available. Cannot process upgrade request."})
+			tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: "❌ Agent not available. Cannot process upgrade request."})
 		}
 	}()
 
