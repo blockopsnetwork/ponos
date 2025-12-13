@@ -108,8 +108,27 @@ type tuiModel struct {
 
 	currentTodos []TodoItem
 	showTodos    bool
+
+	helperVisible   bool
+	helperSelected  int
+	filteredHelpers []HelperCommand
+
+	// autoScroll controls whether new messages jump to bottom; disabled when user scrolls manually.
+	autoScroll bool
 }
 
+type HelperCommand struct {
+	Command     string
+	Description string
+}
+
+var helperCommands = []HelperCommand{
+	{Command: "/help", Description: "Show detailed help and shortcuts"},
+	{Command: "/status", Description: "Show configured tokens and working directory"},
+	{Command: "/clear", Description: "Clear chat history"},
+	{Command: "upgrade polkadot", Description: "Upgrade a network to the latest release"},
+	{Command: "diagnose polkadot", Description: "Run diagnostics for a network"},
+}
 
 type ChatMessage struct {
 	ID        string
@@ -150,6 +169,7 @@ func (tui *PonosAgentTUI) Start() error {
 	p := tea.NewProgram(
 		&model,
 		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
 	)
 
 	model.program = p
@@ -169,7 +189,7 @@ func (tui *PonosAgentTUI) initModel() tuiModel {
 	ta.Focus()
 	ta.Prompt = ""
 	ta.CharLimit = 2000
-	ta.SetWidth(75)
+	ta.SetWidth(80) // Will be properly sized in window resize
 	ta.SetHeight(3)
 	ta.ShowLineNumbers = false
 
@@ -202,6 +222,8 @@ func (tui *PonosAgentTUI) initModel() tuiModel {
 		loadingMsg:          "",
 		currentDir:          cwd,
 		showHelp:            true,
+		filteredHelpers:     helperCommands,
+		autoScroll:          true,
 	}
 
 	return m
@@ -228,31 +250,31 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		if !m.ready {
-			logoHeight := 10
-			titleHeight := 4
+			logoHeight := 8
+			titleHeight := 2
 			loadingHeight := 1
 			helpHeight := 1
-			inputHeight := 4
-			spacingHeight := 3
+			inputHeight := 3
+			spacingHeight := 2
 
 			messageHeight := msg.Height - logoHeight - titleHeight - loadingHeight - inputHeight - helpHeight - spacingHeight
-			if messageHeight < 3 {
-				messageHeight = 3
+			if messageHeight < 10 {
+				messageHeight = 10
 			}
 
 			m.viewport = viewport.New(msg.Width, messageHeight)
 			m.textarea.SetWidth(msg.Width - 4)
 			m.ready = true
 		} else {
-			logoHeight := 10
-			titleHeight := 4
+			logoHeight := 8
+			titleHeight := 2
 			loadingHeight := 1
 			helpHeight := 1
-			inputHeight := 4
-			spacingHeight := 3
+			inputHeight := 3
+			spacingHeight := 2
 			messageHeight := msg.Height - logoHeight - titleHeight - loadingHeight - inputHeight - helpHeight - spacingHeight
-			if messageHeight < 3 {
-				messageHeight = 3
+			if messageHeight < 10 {
+				messageHeight = 10
 			}
 
 			m.viewport.Width = msg.Width
@@ -264,6 +286,41 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateViewportContent()
 
 	case tea.KeyMsg:
+		if m.handleHelperNavigation(msg) {
+			return m, nil
+		}
+
+		switch msg.String() {
+		case "up", "k":
+			m.viewport.ScrollUp(1)
+			m.autoScroll = false
+			return m, nil
+		case "down", "j":
+			m.viewport.ScrollDown(1)
+			if m.viewport.AtBottom() {
+				m.autoScroll = true
+			}
+			return m, nil
+		case "pgup", "ctrl+u":
+			m.viewport.HalfPageUp()
+			m.autoScroll = false
+			return m, nil
+		case "pgdown", "ctrl+d":
+			m.viewport.HalfPageDown()
+			if m.viewport.AtBottom() {
+				m.autoScroll = true
+			}
+			return m, nil
+		case "home", "g":
+			m.viewport.GotoTop()
+			m.autoScroll = false
+			return m, nil
+		case "end", "G":
+			m.viewport.GotoBottom()
+			m.autoScroll = true
+			return m, nil
+		}
+
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			return m, tea.Quit
@@ -290,9 +347,15 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if userInput != "" && !m.loading {
 				if strings.HasPrefix(userInput, "/") {
 					switch userInput {
-					case "/h", "/help":
-						m.showHelp = !m.showHelp
+					case "/", "/h", "/help":
+						m.messages = append(m.messages, ChatMessage{
+							Role:      "system",
+							Content:   m.tui.getHelpText(),
+							Timestamp: time.Now(),
+						})
 						m.textarea.Reset()
+						m.updateHelperDropdown()
+						m.updateViewportContent()
 						return m, nil
 					case "/status":
 						m.messages = append(m.messages, ChatMessage{
@@ -301,20 +364,23 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							Timestamp: time.Now(),
 						})
 						m.textarea.Reset()
+						m.updateHelperDropdown()
 						m.updateViewportContent()
 						return m, nil
 					case "/clear":
 						m.messages = []ChatMessage{}
 						m.textarea.Reset()
+						m.updateHelperDropdown()
 						m.updateViewportContent()
 						return m, nil
 					default:
 						m.messages = append(m.messages, ChatMessage{
 							Role:      "system",
-							Content:   fmt.Sprintf("Unknown command: %s. Type /h for help.", userInput),
+							Content:   fmt.Sprintf("Unknown command: %s. Type / for available commands.", userInput),
 							Timestamp: time.Now(),
 						})
 						m.textarea.Reset()
+						m.updateHelperDropdown()
 						m.updateViewportContent()
 						return m, nil
 					}
@@ -333,79 +399,88 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				})
 
 				m.textarea.Reset()
+				m.updateHelperDropdown()
 				m.loading = true
 				m.loadingMsg = "Ponos thinking..."
 				m.animationFrame = 0
+				m.autoScroll = true
 				m.updateViewportContent()
 
 				ctx, cancel := context.WithCancel(context.Background())
 				m.cancelThinking = cancel
 
-				program := m.program
 				go func() {
-					animFrame := 0
-					for {
-						if !m.loading {
-							break
+					defer func() {
+						if m.program != nil {
+							m.program.Send(tea.Msg("loading_done"))
 						}
-						time.Sleep(150 * time.Millisecond)
-						if program != nil && m.loading {
-							program.Send(animationUpdate{frame: animFrame})
-							animFrame++
-						}
-					}
-				}()
-
-				go func() {
-					m.tui.logger.Info("Starting streaming processing", "input", userInput)
+					}()
 
 					updates := make(chan StreamingUpdate, 10)
-
 					go func() {
 						defer close(updates)
 						err := m.tui.handleUserInputWithStreaming(ctx, userInput, m.conversationHistory, updates)
 						if err != nil {
-							m.tui.logger.Error("Streaming processing failed", "error", err)
-							if program != nil {
-								program.Send(msgResponse{content: "", err: err})
-							}
+							m.tui.logger.Error("Error handling user input", "error", err)
 						}
 					}()
 
 					var finalResponse string
 					for update := range updates {
-						select {
-						case <-ctx.Done():
-							m.tui.logger.Info("Processing cancelled")
+						if m.program == nil {
+							continue
+						}
+						if ctx.Err() != nil {
 							return
-						default:
 						}
 
-						if program != nil {
-							switch update.Type {
-							case "thinking":
-								program.Send(streamingUpdate{update: update})
-							case "tool_start":
-								program.Send(streamingUpdate{update: update})
-							case "tool_result":
-								program.Send(streamingUpdate{update: update})
-							case "assistant":
-								finalResponse = update.Message
-							case "complete":
-								program.Send(msgResponse{content: finalResponse, err: nil})
-								return
-							}
+						switch update.Type {
+						case "thinking":
+							m.program.Send(streamingUpdate{update: update})
+						case "assistant":
+							m.program.Send(streamingUpdate{update: update})
+						case "tool_call":
+							m.program.Send(streamingUpdate{update: update})
+						case "complete":
+							finalResponse = update.Message
+						default:
+							m.program.Send(streamingUpdate{update: update})
 						}
 					}
 
-					if finalResponse != "" && program != nil {
-						program.Send(msgResponse{content: finalResponse, err: nil})
+					if finalResponse != "" && ctx.Err() == nil {
+						m.conversationHistory = append(m.conversationHistory, map[string]string{
+							"role":    "assistant",
+							"content": finalResponse,
+						})
 					}
 				}()
 
 				return m, nil
 			}
 		}
+
+		m.textarea, cmd = m.textarea.Update(msg)
+		cmds = append(cmds, cmd)
+		m.updateHelperDropdown()
+
+	case tea.MouseMsg:
+		// Only handle wheel events for scrolling, let other mouse events pass through
+		if msg.Action == tea.MouseActionPress {
+			if msg.Button == tea.MouseButtonWheelUp {
+				m.viewport.ScrollUp(3)
+				m.autoScroll = false
+				return m, nil
+			}
+			if msg.Button == tea.MouseButtonWheelDown {
+				m.viewport.ScrollDown(3)
+				if m.viewport.AtBottom() {
+					m.autoScroll = true
+				}
+				return m, nil
+			}
+		}
+		// Let other mouse events (selection, clicks) pass through to terminal
 
 	case msgResponse:
 		m.loading = false
@@ -441,12 +516,20 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.update.Type {
 		case "thinking":
 			m.loadingMsg = msg.update.Message
+			// Add thinking message to chat history to show context
+			m.messages = append(m.messages, ChatMessage{
+				ID:        generateMessageID(),
+				Role:      "thinking",
+				Content:   msg.update.Message,
+				Timestamp: time.Now(),
+			})
+			m.updateViewportContent()
 		case "tool_start":
 			m.loadingMsg = fmt.Sprintf("Executing %s...", msg.update.Tool)
 			m.messages = append(m.messages, ChatMessage{
 				ID:        generateMessageID(),
-				Role:      "activity",
-				Content:   fmt.Sprintf("Executing %s", msg.update.Tool),
+				Role:      "tool_header",
+				Content:   msg.update.Tool,
 				Timestamp: time.Now(),
 			})
 			m.updateViewportContent()
@@ -458,15 +541,15 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				var activityMsg string
 				switch msg.update.ToolName {
 				case "create_todo":
-					activityMsg = "📋 Created new task"
+					activityMsg = "Created new task"
 				case "create_deployment_todos":
-					activityMsg = fmt.Sprintf("📋 Created deployment plan (%d tasks)", len(msg.update.Todos))
+					activityMsg = fmt.Sprintf("Created deployment plan (%d tasks)", len(msg.update.Todos))
 				case "update_todo":
-					activityMsg = "✏️ Updated task status"
+					activityMsg = "Updated task status"
 				case "list_todos":
-					activityMsg = fmt.Sprintf("📋 Showing %d active tasks", len(msg.update.Todos))
+					activityMsg = fmt.Sprintf("Showing %d active tasks", len(msg.update.Todos))
 				default:
-					activityMsg = "📋 Updated tasks"
+					activityMsg = "Updated tasks"
 				}
 
 				m.messages = append(m.messages, ChatMessage{
@@ -479,24 +562,18 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateViewportContent()
 			}
 		case "tool_result":
-			var statusMsg, chatMsg string
+			var statusMsg string
 			if msg.update.Success {
 				statusMsg = fmt.Sprintf("%s completed successfully", msg.update.Tool)
-				chatMsg = fmt.Sprintf("%s completed successfully", msg.update.Tool)
 			} else {
 				statusMsg = fmt.Sprintf("%s failed", msg.update.Tool)
-				chatMsg = fmt.Sprintf("%s failed", msg.update.Tool)
-			}
-
-			if msg.update.Summary != "" {
-				chatMsg += fmt.Sprintf("\n└ %s", msg.update.Summary)
 			}
 
 			m.loadingMsg = statusMsg
 			m.messages = append(m.messages, ChatMessage{
 				ID:        generateMessageID(),
-				Role:      "activity",
-				Content:   chatMsg,
+				Role:      "tool_result",
+				Content:   fmt.Sprintf("%s|%t", msg.update.Tool, msg.update.Success),
 				Timestamp: time.Now(),
 			})
 			m.updateViewportContent()
@@ -549,9 +626,6 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	}
 
-	m.textarea, cmd = m.textarea.Update(msg)
-	cmds = append(cmds, cmd)
-
 	m.viewport, cmd = m.viewport.Update(msg)
 	cmds = append(cmds, cmd)
 
@@ -591,6 +665,10 @@ func (m *tuiModel) View() string {
 		sections = append(sections, subtitleStyle.Render(checkpointLine))
 	}
 
+	if m.helperVisible && len(m.filteredHelpers) > 0 {
+		sections = append(sections, m.renderHelperDropdown())
+	}
+
 	if len(m.currentTodos) > 0 {
 		todoSection := m.renderTodoSection()
 		sections = append(sections, todoSection)
@@ -608,15 +686,24 @@ func (m *tuiModel) View() string {
 
 	sections = append(sections, m.textarea.View())
 
-	bottomRight := "⌘P to generate a command to know what ponos can do for you"
+	leftHelp := "/help for help and / to see available commands"
+	rightHelp := "⌘P to generate a command to know what ponos can do for you"
 	if m.loading {
 		indicator := m.getAnimatedIndicator()
-		bottomRight = fmt.Sprintf("%s Processing...", indicator)
+		rightHelp = fmt.Sprintf("%s Processing...", indicator)
 	}
-	helpText := helpStyle.Render("/help for help and / to see available commands") +
-		strings.Repeat(" ", max(0, m.width-len("/help for help and / to see available commands")-len(bottomRight))) +
-		helpStyle.Render(bottomRight)
-	sections = append(sections, helpText)
+
+	// Ensure help text fits within terminal width
+	totalHelpLen := len(leftHelp) + len(rightHelp)
+	if totalHelpLen >= m.width {
+		// If too long, just show the left help
+		helpText := helpStyle.Render(leftHelp)
+		sections = append(sections, helpText)
+	} else {
+		spacePadding := strings.Repeat(" ", m.width-totalHelpLen)
+		helpText := helpStyle.Render(leftHelp) + spacePadding + helpStyle.Render(rightHelp)
+		sections = append(sections, helpText)
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
@@ -628,6 +715,16 @@ func (m *tuiModel) getAnimatedIndicator() string {
 
 func (m *tuiModel) updateViewportContent() {
 	var content strings.Builder
+	maxWidth := m.viewport.Width - 4
+	if maxWidth < 20 {
+		maxWidth = 80
+	}
+	
+	if len(m.messages) == 0 {
+		content.WriteString("No messages yet. Type a message below to start.\n")
+		m.viewport.SetContent(content.String())
+		return
+	}
 
 	for _, msg := range m.messages {
 		var prefix, text string
@@ -642,6 +739,10 @@ func (m *tuiModel) updateViewportContent() {
 			prefix = ""
 			text = msg.Content
 			style = assistantMessageStyle
+		case "thinking":
+			prefix = "> "
+			text = msg.Content
+			style = systemMessageStyle
 		case "system":
 			prefix = ""
 			text = msg.Content
@@ -650,38 +751,71 @@ func (m *tuiModel) updateViewportContent() {
 			prefix = "Error: "
 			text = msg.Content
 			style = errorMessageStyle
+		case "tool_header":
+			prefix = ""
+			text = getToolContextualMessage(msg.Content)
+			style = lipgloss.NewStyle().Foreground(brandColor).Bold(false)
+		case "tool_result":
+			parts := strings.Split(msg.Content, "|")
+			toolName := parts[0]
+			success := len(parts) > 1 && parts[1] == "true"
+			friendlyName := getToolCompletionMessage(toolName, success)
+			if success {
+				prefix = "✓ "
+				text = friendlyName
+				style = lipgloss.NewStyle().Foreground(successColor)
+			} else {
+				prefix = "✗ "
+				text = friendlyName
+				style = lipgloss.NewStyle().Foreground(errorColor)
+			}
 		case "activity":
 			prefix = ""
 			text = msg.Content
 			style = activityStyle
 		}
 
-		if prefix != "" {
-			content.WriteString(style.Render(prefix + text))
-		} else {
-			content.WriteString(style.Render(text))
-		}
+		// Wrap text to fit viewport width
+		fullText := prefix + text
+		wrappedText := wrapText(fullText, maxWidth)
+
+		content.WriteString(style.Render(wrappedText))
 		content.WriteString("\n\n")
 	}
 
 	m.viewport.SetContent(content.String())
-	m.viewport.GotoBottom()
+	
+	if m.autoScroll || m.isStreaming {
+		m.viewport.GotoBottom()
+	}
 }
 
 func (tui *PonosAgentTUI) getHelpText() string {
-	return `Available commands:
-/help - Show this help message
-/status - Show current setup status
+	return `Usage Modes
+• Interactive – run ponos-tui and start chatting
+• Non-interactive – ponos-tui -p "upgrade polkadot" to send a one-off prompt
 
-Note: Type / to see command suggestions and available slash commands.
+Slash Commands
+• /help      Show detailed help and shortcuts
+• /status    Show configured tokens and working directory
+• /clear     Clear chat history
 
-Blockchain Operations:
-• "upgrade [network] to latest" - Upgrade any blockchain network
-• "update network [name]" - Update specific network
-• "new release for [client]" - Process release updates
+Scrolling
+• ↑/k        Scroll up one line
+• ↓/j        Scroll down one line
+• PgUp/Ctrl+U  Scroll up half page
+• PgDn/Ctrl+D  Scroll down half page
+• Home/g     Go to top
+• End/G      Go to bottom
 
-I can help you with blockchain network upgrades and deployments.
-Just tell me what you'd like me to do in natural language!`
+Tips
+• Type / to open the helper menu, use ↑/↓ to pick a command, press Tab to autocomplete
+• Shift+Enter inserts a newline, Enter sends your prompt, Ctrl+C exits the TUI
+
+Example Prompts
+• "Upgrade polkadot archive node to the latest stable release"
+• "Run diagnostics for polkadot and summarize the findings"
+• "List networks that have pending upgrades"`
 }
 
 func (tui *PonosAgentTUI) getStatusText() string {
@@ -699,7 +833,7 @@ func (tui *PonosAgentTUI) getStatusText() string {
 		status += "Slack Token missing\n"
 	}
 
-	if tui.bot.agent != nil {
+	if tui.bot.agentCoreURL != "" {
 		status += "llm available\n"
 	} else {
 		status += "llm unavailable (check OPENAI_API_KEY)\n"
@@ -732,15 +866,15 @@ func (tui *PonosAgentTUI) handleUserInputWithStreaming(ctx context.Context, inpu
 		return nil
 	}
 
-	if tui.bot.agent == nil {
+	if tui.bot.agentCoreURL == "" {
 		tui.logger.Error("Agent-core not available")
-		updates <- StreamingUpdate{Type: "assistant", Message: "Sorry, the agent-core backend is not available. Please ensure agent-core is running and accessible."}
+		updates <- StreamingUpdate{Type: "assistant", Message: "Sorry, the nodeoperator api is not available. Please ensure the api is running and accessible."}
 		updates <- StreamingUpdate{Type: "complete", Message: "Done"}
 		return nil
 	}
 
-	tui.logger.Info("Sending user prompt directly to agent-core", "input", input)
-	return tui.bot.agent.ProcessConversationWithStreamingAndHistory(ctx, input, conversationHistory, updates)
+	tui.logger.Info("Sending user prompt directly to nodeoperator api", "input", input)
+	return tui.bot.StreamConversation(ctx, input, conversationHistory, updates)
 }
 
 func (tui *PonosAgentTUI) handleUpgradeRequest(ctx context.Context, intent *UpgradeIntent, updates chan<- StreamingUpdate) error {
@@ -761,20 +895,17 @@ func (tui *PonosAgentTUI) handleUpgradeRequest(ctx context.Context, intent *Upgr
 			tui.safeSendUpdate(updates, StreamingUpdate{Type: "complete", Message: "Done"})
 		}()
 
-		if tui.bot.githubHandler != nil {
-			response := tui.bot.githubHandler.HandleChainUpdate("network", intent.Network, "tui-user")
+		if tui.bot.agentCoreURL != "" {
+			userMessage := fmt.Sprintf("upgrade %s to latest", intent.Network)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 
-			if response != nil {
-				if len(response.Blocks) > 0 {
-					tui.safeSendUpdate(updates, StreamingUpdate{Type: "activity", Message: "Network update process initiated via GitHub workflow."})
-				} else if response.Text != "" {
-					tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: response.Text})
-				}
-			} else {
-				tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: "❌ Failed to initiate network upgrade. Check logs for details."})
+			err := tui.bot.StreamConversation(ctx, userMessage, nil, updates)
+			if err != nil {
+				tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: fmt.Sprintf("❌ Failed to process upgrade request: %v", err)})
 			}
 		} else {
-			tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: "❌ GitHub handler not available. Cannot process upgrade request."})
+			tui.safeSendUpdate(updates, StreamingUpdate{Type: "assistant", Message: "❌ Agent not available. Cannot process upgrade request."})
 		}
 	}()
 
@@ -795,6 +926,7 @@ func (tui *PonosAgentTUI) safeSendUpdate(updates chan<- StreamingUpdate, update 
 	}
 }
 
+
 func (m *tuiModel) renderTodoSection() string {
 	if len(m.currentTodos) == 0 {
 		return ""
@@ -814,31 +946,31 @@ func (m *tuiModel) renderTodoSection() string {
 		}
 	}
 
-	header := fmt.Sprintf("📋 Active Tasks (%d pending, %d in progress, %d completed):",
+	header := fmt.Sprintf("Active Tasks (%d pending, %d in progress, %d completed):",
 		pending, inProgress, completed)
 	todoLines = append(todoLines, titleStyle.Render(header))
 	todoLines = append(todoLines, "") // Empty line for spacing
 
 	for i, todo := range m.currentTodos {
-		var emoji string
+		var status string
 		var color lipgloss.Color
 
 		switch todo.Status {
 		case "pending":
-			emoji = "⏳"
+			status = "[ ]"
 			color = subtleColor
 		case "in_progress":
-			emoji = "🔄"
+			status = "[~]"
 			color = accentColor
 		case "completed":
-			emoji = "✅"
+			status = "[x]"
 			color = successColor
 		default:
-			emoji = "❓"
+			status = "[?]"
 			color = subtleColor
 		}
 
-		line := fmt.Sprintf("%d. %s %s", i+1, emoji, todo.Content)
+		line := fmt.Sprintf("%d. %s %s", i+1, status, todo.Content)
 		styledLine := lipgloss.NewStyle().Foreground(color).Render(line)
 		todoLines = append(todoLines, styledLine)
 	}
@@ -871,15 +1003,15 @@ func (m *tuiModel) handleTodoUpdate(message string) error {
 			var activityMsg string
 			switch streamData.ToolName {
 			case "create_todo":
-				activityMsg = "📋 Created new task"
+				activityMsg = "Created new task"
 			case "create_deployment_todos":
-				activityMsg = fmt.Sprintf("📋 Created deployment plan (%d tasks)", len(streamData.Todos))
+				activityMsg = fmt.Sprintf("Created deployment plan (%d tasks)", len(streamData.Todos))
 			case "update_todo":
-				activityMsg = "✏️ Updated task status"
+				activityMsg = "Updated task status"
 			case "list_todos":
-				activityMsg = fmt.Sprintf("📋 Showing %d active tasks", len(streamData.Todos))
+				activityMsg = fmt.Sprintf("Showing %d active tasks", len(streamData.Todos))
 			default:
-				activityMsg = "📋 Updated tasks"
+				activityMsg = "Updated tasks"
 			}
 
 			m.messages = append(m.messages, ChatMessage{
@@ -899,9 +1031,237 @@ func (m *tuiModel) handleSimpleTodoMessage(message string) error {
 		m.messages = append(m.messages, ChatMessage{
 			ID:        generateMessageID(),
 			Role:      "activity",
-			Content:   fmt.Sprintf("📋 %s", message),
+			Content:   message,
 			Timestamp: time.Now(),
 		})
 	}
 	return nil
+}
+
+func (m *tuiModel) updateHelperDropdown() {
+	input := strings.TrimSpace(m.textarea.Value())
+	if strings.HasPrefix(input, "/") {
+		query := strings.ToLower(strings.TrimPrefix(input, "/"))
+		var filtered []HelperCommand
+		for _, helper := range helperCommands {
+			cmd := strings.ToLower(helper.Command)
+			desc := strings.ToLower(helper.Description)
+			if query == "" || strings.Contains(cmd, query) || strings.Contains(desc, query) {
+				filtered = append(filtered, helper)
+			}
+		}
+		if len(filtered) == 0 {
+			filtered = helperCommands
+		}
+		m.filteredHelpers = filtered
+		m.helperVisible = true
+		if m.helperSelected >= len(filtered) {
+			m.helperSelected = 0
+		}
+	} else {
+		m.helperVisible = false
+		m.filteredHelpers = nil
+		m.helperSelected = 0
+	}
+}
+
+func (m *tuiModel) handleHelperNavigation(msg tea.KeyMsg) bool {
+	if !m.helperVisible || len(m.filteredHelpers) == 0 {
+		return false
+	}
+
+	switch msg.String() {
+	case "up":
+		if m.helperSelected > 0 {
+			m.helperSelected--
+		}
+		return true
+	case "down":
+		if m.helperSelected+1 < len(m.filteredHelpers) {
+			m.helperSelected++
+		}
+		return true
+	case "tab":
+		m.applyHelperSelection()
+		m.updateHelperDropdown()
+		return true
+	}
+	return false
+}
+
+func (m *tuiModel) applyHelperSelection() {
+	if len(m.filteredHelpers) == 0 {
+		return
+	}
+	selected := m.filteredHelpers[m.helperSelected]
+	text := selected.Command
+	if !strings.HasSuffix(text, " ") {
+		text += " "
+	}
+	m.textarea.SetValue(text)
+	m.textarea.CursorEnd()
+	m.helperVisible = false
+	m.helperSelected = 0
+	m.filteredHelpers = helperCommands
+}
+
+func (m *tuiModel) renderHelperDropdown() string {
+	if len(m.filteredHelpers) == 0 {
+		return ""
+	}
+
+	var lines []string
+	lines = append(lines, titleStyle.Render("Slash Commands"))
+
+	for i, helper := range m.filteredHelpers {
+		indicator := "  "
+		style := helpStyle
+		if i == m.helperSelected {
+			indicator = "› "
+			style = helpStyle.Foreground(accentColor).Bold(true)
+		}
+		entry := fmt.Sprintf("%s%s – %s", indicator, helper.Command, helper.Description)
+		lines = append(lines, style.Render(entry))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, helpStyle.Render("Shortcuts: Enter send • Shift+Enter newline • Tab autocomplete • Ctrl+C exit"))
+
+	panel := strings.Join(lines, "\n")
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(subtleColor).
+		Padding(0, 1).
+		Render(panel)
+}
+
+func getToolContextualMessage(toolName string) string {
+	contextMessages := map[string]string{
+		"upgrade_blockchain_client": "Starting the node upgrade process...",
+		"create_pull_request":       "Creating a pull request with the changes...", 
+		"update_network_images":     "Updating container images across the network...",
+		"fetch_github_content":      "Fetching the latest configuration from GitHub...",
+		"update_deployment_files":   "Updating deployment configuration files...",
+		"run_network_diagnostics":   "Running diagnostics to check network health...",
+		"validate_configuration":    "Validating the configuration settings...",
+		"backup_current_state":      "Creating a backup of the current state...",
+		"rollback_changes":          "Rolling back to the previous configuration...",
+		"verify_upgrade_success":    "Verifying the upgrade completed successfully...",
+	}
+	
+	if message, exists := contextMessages[toolName]; exists {
+		return message
+	}
+	
+	// Fallback: create a contextual message from the tool name
+	friendlyName := strings.ReplaceAll(toolName, "_", " ")
+	return fmt.Sprintf("Working on %s...", friendlyName)
+}
+
+func getToolCompletionMessage(toolName string, success bool) string {
+	if success {
+		successMessages := map[string]string{
+			"upgrade_blockchain_client": "Node upgrade completed successfully",
+			"create_pull_request":       "Pull request created successfully", 
+			"update_network_images":     "Container images updated across the network",
+			"fetch_github_content":      "Configuration fetched from GitHub",
+			"update_deployment_files":   "Deployment configuration updated",
+			"run_network_diagnostics":   "Network diagnostics completed - all systems healthy",
+			"validate_configuration":    "Configuration validation passed",
+			"backup_current_state":      "Current state backed up successfully",
+			"rollback_changes":          "Successfully rolled back to previous configuration",
+			"verify_upgrade_success":    "Upgrade verification completed successfully",
+		}
+		
+		if message, exists := successMessages[toolName]; exists {
+			return message
+		}
+		
+		// Fallback
+		friendlyName := strings.ReplaceAll(toolName, "_", " ")
+		return fmt.Sprintf("%s completed successfully", strings.Title(friendlyName))
+	} else {
+		failureMessages := map[string]string{
+			"upgrade_blockchain_client": "Node upgrade failed - please check the logs",
+			"create_pull_request":       "Failed to create pull request", 
+			"update_network_images":     "Failed to update container images",
+			"fetch_github_content":      "Failed to fetch configuration from GitHub",
+			"update_deployment_files":   "Failed to update deployment configuration",
+			"run_network_diagnostics":   "Network diagnostics failed - issues detected",
+			"validate_configuration":    "Configuration validation failed",
+			"backup_current_state":      "Failed to backup current state",
+			"rollback_changes":          "Failed to rollback changes",
+			"verify_upgrade_success":    "Upgrade verification failed",
+		}
+		
+		if message, exists := failureMessages[toolName]; exists {
+			return message
+		}
+		
+		// Fallback
+		friendlyName := strings.ReplaceAll(toolName, "_", " ")
+		return fmt.Sprintf("%s failed", strings.Title(friendlyName))
+	}
+}
+
+func wrapText(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+
+	var result strings.Builder
+	lines := strings.Split(text, "\n")
+	
+	for i, line := range lines {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+		
+		if len(line) <= width {
+			result.WriteString(line)
+			continue
+		}
+		
+		words := strings.Fields(line)
+		if len(words) == 0 {
+			result.WriteString(line)
+			continue
+		}
+
+		currentLine := ""
+		for _, word := range words {
+			if len(word) > width {
+				if currentLine != "" {
+					result.WriteString(currentLine + "\n")
+					currentLine = ""
+				}
+				for len(word) > width {
+					result.WriteString(word[:width] + "\n")
+					word = word[width:]
+				}
+				if word != "" {
+					currentLine = word
+				}
+			} else if currentLine == "" {
+				currentLine = word
+			} else if len(currentLine)+1+len(word) <= width {
+				currentLine += " " + word
+			} else {
+				result.WriteString(currentLine + "\n")
+				currentLine = word
+			}
+		}
+		if currentLine != "" {
+			result.WriteString(currentLine)
+		}
+	}
+
+	return result.String()
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

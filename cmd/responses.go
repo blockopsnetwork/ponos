@@ -8,13 +8,7 @@ import (
 	"github.com/slack-go/slack"
 )
 
-type SlashCommandResponse struct {
-	ResponseType string        `json:"response_type"`
-	Text         string        `json:"text,omitempty"`
-	Blocks       []slack.Block `json:"blocks,omitempty"`
-}
-
-func BuildReleaseNotificationBlocks(payload ReleasesWebhookPayload, summary *AgentSummary, prURL ...string) []slack.Block {
+func buildReleaseNotificationBlocks(payload ReleasesWebhookPayload, summary *AgentSummary, prURL ...string) []slack.Block {
 	var repo Repository
 	var release ReleaseInfo
 
@@ -64,14 +58,20 @@ func BuildReleaseNotificationBlocks(payload ReleasesWebhookPayload, summary *Age
 		}
 	}
 
-	messageText.WriteString(fmt.Sprintf(":memo: *AI Generated Release Summary*\n%s\n\n", releaseSummary))
+	messageText.WriteString(fmt.Sprintf(":memo: *Nodeoperator Agent Generated Release Summary*\n%s\n\n", releaseSummary))
 
 	messageText.WriteString(":gear: *Next Steps*\n")
-	messageText.WriteString("- PR created → review/merge required.\n")
+	messageText.WriteString("- PR created and hands off to Authorized reviewer for Approval and Merge\n")
+
 	if summary.ConfigChangesNeeded != "" && summary.ConfigChangesNeeded != "Not specified" {
 		messageText.WriteString(fmt.Sprintf("- Config changes: %s\n", summary.ConfigChangesNeeded))
 	} else {
 		messageText.WriteString("- No config changes noted.\n")
+	}
+	if structured := formatStructuredConfigChanges(summary.ConfigChangesJSON); structured != "" {
+		messageText.WriteString("\n:wrench: *Structured Config Changes*\n")
+		messageText.WriteString(structured)
+		messageText.WriteString("\n")
 	}
 	messageText.WriteString("\n")
 
@@ -104,9 +104,46 @@ func extractVersionTag(aiResponse string) string {
 	return aiResponse
 }
 
-func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSummary, release *ReleaseInfo) (title, body, commitMessage string) {
+func formatStructuredConfigChanges(instructions []ConfigChangeInstruction) string {
+	if len(instructions) == 0 {
+		return ""
+	}
+
+	var builder strings.Builder
+	for _, instr := range instructions {
+		if instr.Description == "" && instr.Path == "" && instr.Action == "" {
+			continue
+		}
+
+		var parts []string
+		if instr.Description != "" {
+			parts = append(parts, instr.Description)
+		} else if instr.Action != "" {
+			parts = append(parts, strings.Title(instr.Action))
+		}
+		if instr.Path != "" {
+			parts = append(parts, fmt.Sprintf("`%s`", instr.Path))
+		}
+
+		if len(parts) == 0 {
+			continue
+		}
+
+		builder.WriteString("• ")
+		builder.WriteString(strings.Join(parts, " — "))
+		builder.WriteString("\n")
+	}
+
+	return strings.TrimSpace(builder.String())
+}
+
+func buildPRContent(networkName, releaseTag, botName string, summary *AgentSummary, release *ReleaseInfo) (title, body, commitMessage string) {
 	if botName == "" {
 		botName = "Ponos"
+	}
+
+	if networkName == "" {
+		networkName = "network"
 	}
 
 	cleanReleaseTag := extractVersionTag(releaseTag)
@@ -130,13 +167,31 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 	}
 
 	configChanges := strings.TrimSpace(summary.ConfigChangesNeeded)
+	structured := formatStructuredConfigChanges(summary.ConfigChangesJSON)
 	if configChanges == "" || strings.EqualFold(configChanges, "Not specified") {
-		configChanges = "Updated Docker image tags to reference the latest stable release."
+		if structured != "" {
+			configChanges = structured
+		} else {
+			configChanges = "Updated Docker image tags to reference the latest stable release."
+		}
 	}
 
 	riskAssessment := strings.TrimSpace(summary.RiskAssessment)
 	if riskAssessment == "" || strings.EqualFold(riskAssessment, "Not specified") {
 		riskAssessment = "Review release notes and run smoke tests before promoting to production."
+	}
+
+	if title == "" {
+		title = fmt.Sprintf("%s: Update %s", botName, networkName)
+	}
+
+	if cleanReleaseTag == "" {
+		cleanReleaseTag = "latest"
+	}
+
+	severity := strings.TrimSpace(summary.Severity)
+	if severity == "" || strings.EqualFold(severity, "Not specified") {
+		severity = "info"
 	}
 
 	body = fmt.Sprintf(`## 🤖 Automated Update by %s
@@ -151,6 +206,7 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 %s
 
 **Severity:** %s
+%s
 
 ---
 **About this PR:**
@@ -163,7 +219,13 @@ func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSumma
 		releaseSummary,
 		configChanges,
 		riskAssessment,
-		strings.ToUpper(summary.Severity),
+		strings.ToUpper(severity),
+		func() string {
+			if structured == "" || structured == configChanges {
+				return ""
+			}
+			return fmt.Sprintf("\n**Structured Config Changes:**\n%s\n", structured)
+		}(),
 		botName,
 		botName)
 

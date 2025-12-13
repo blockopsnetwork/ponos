@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 type DockerOperations struct{}
@@ -16,7 +17,7 @@ func NewDockerOperations() *DockerOperations {
 	return &DockerOperations{}
 }
 
-func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClient *GitHubMCPClient, agent *NodeOperatorAgent, filesToUpdate []fileInfo, network, client string) (*dockerTagResult, error) {
+func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClient *GitHubMCPClient, agent AgentClient, filesToUpdate []fileInfo, network, client string) (*dockerTagResult, error) {
 	imageToTag := make(map[string]string)
 
 	for _, f := range filesToUpdate {
@@ -24,7 +25,10 @@ func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClie
 		if ferr != nil {
 			continue
 		}
-		images := d.extractImageReposWithLLM(ctx, agent, content)
+		images, err := agent.ExtractImages(ctx, content)
+		if err != nil {
+			continue
+		}
 		for _, img := range images {
 			imageToTag[img] = ""
 		}
@@ -59,7 +63,14 @@ func (d *DockerOperations) fetchLatestTagFromNodeReleases(network, client string
 	}
 	releasesURL.RawQuery = query.Encode()
 
-	resp, err := http.Get(releasesURL.String())
+	req, err := http.NewRequestWithContext(ctxWithTimeout(), http.MethodGet, releasesURL.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "Ponos/1.0")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -103,13 +114,8 @@ func (d *DockerOperations) fetchLatestTagFromNodeReleases(network, client string
 	return "", fmt.Errorf("docker tag not found for network=%s client=%s", network, client)
 }
 
-func (d *DockerOperations) extractImageReposWithLLM(ctx context.Context, agent *NodeOperatorAgent, yamlContent string) []string {
-	if agent != nil {
-		if llmRepos, err := agent.AnalyzeYAMLForBlockchainContainers(ctx, yamlContent); err == nil && len(llmRepos) > 0 {
-			return llmRepos
-		}
-	}
 
-	yamlOps := NewYAMLOperations()
-	return yamlOps.ExtractImageReposFromYAML(yamlContent)
+func ctxWithTimeout() context.Context {
+	ctx, _ := context.WithTimeout(context.Background(), 15*time.Second)
+	return ctx
 }

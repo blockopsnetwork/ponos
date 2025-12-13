@@ -1,0 +1,47 @@
+version: 1
+
+projects:
+  - network: polkadot
+    owner: blockops-sh
+    project_name: polkadot-archive
+    name: blockops-sre
+    branch: main
+    paths:
+      - k8s/argocd-deployments/manifests/fullnodes/polkadot-archive.yml
+
+  - network: polkadot
+    owner: blockops-sh
+    project_name: polkadot-kusama-rpc
+    name: blockops-sre
+    branch: main
+    paths:
+      - k8s/argocd-deployments/manifests/fullnodes/polkadot-kusama-rpc.yml
+
+  - network: polkadot
+    owner: blockops-sh
+    project_name: polkadot-archive-sec-test
+    name: blockops-sre
+    branch: main 
+    paths:
+      - k8s/argocd-deployments/manifests/fullnodes/polkadot-archive-sec-test.yml
+
+  - network: ethereum
+    owner: blockops-sh
+    project_name: ethereum-hoodi
+    name: blockops-sre
+    branch: main 
+    paths:
+      - k8s/argocd-deployments/manifests/fullnodes/ethereum-hoodi.yaml
+
+  - network: polkadot
+    project_name: sub0-demo-polkadot-node
+    owner: blockops-sh
+    name: blockops-sre
+    branch: main
+    paths:
+      - k8s/argocd-deployments/manifests/fullnodes/sub0-demo-polkadot-node.yml
+
+
+  
+
+  

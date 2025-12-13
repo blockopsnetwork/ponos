@@ -1,19 +1,31 @@
-version: '3.9'
-
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: mysql
-    restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: ponos   
-      MYSQL_DATABASE: ponos                
-      MYSQL_USER: ponos                  
-      MYSQL_PASSWORD: ponos          
+  ponos-server:
+    image: blockopsnetwork/ponos-server:latest
     ports:
-      - "3306:3306"   
-    volumes:
-      - mysql_data:/var/lib/mysql  
+      - "8080:8080"
+    environment:
+      # GitHub Configuration
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_APP_ID=${GITHUB_APP_ID:-}
+      - GITHUB_INSTALL_ID=${GITHUB_INSTALL_ID:-}
+      - GITHUB_PEM_KEY=${GITHUB_PEM_KEY:-}
+      - GITHUB_BOT_NAME=${GITHUB_BOT_NAME:-ponos-bot}
+      - GITHUB_MCP_URL=http://github-mcp:3001
+      
+      # Slack Configuration
+      - SLACK_TOKEN=${SLACK_TOKEN}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
+      - SLACK_VERIFICATION_TOKEN=${SLACK_VERIFICATION_TOKEN:-}
+      - SLACK_CHANNEL=${SLACK_CHANNEL:-test-channel}
+      
+      - AGENT_CORE_URL=http://api.nodeoperator.ai
+      - PORT=8080
+    depends_on:
+      - github-mcp
+    restart: unless-stopped
+    networks:
+      - ponos
 
-volumes:
-  mysql_data:
+networks:
+  ponos:
+
