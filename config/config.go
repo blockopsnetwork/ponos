@@ -30,17 +30,17 @@ type Config struct {
 }
 
 type ProjectConfig struct {
-	Version  int       `yaml:"version"`
-	Projects []Project `yaml:"projects"`
+	Version  int       `yaml:"version" json:"version"`
+	Projects []Project `yaml:"projects" json:"projects"`
 }
 
 type Project struct {
-	Network     string   `yaml:"network"`
-	ProjectName string   `yaml:"project_name"`
-	Owner       string   `yaml:"owner"`
-	Name        string   `yaml:"name"`
-	Branch      string   `yaml:"branch"`
-	Paths       []string `yaml:"paths"`
+	Network     string   `yaml:"network" json:"network"`
+	ProjectName string   `yaml:"project_name" json:"project_name"`
+	Owner       string   `yaml:"owner" json:"owner"`
+	Name        string   `yaml:"name" json:"name"`
+	Branch      string   `yaml:"branch" json:"branch"`
+	Paths       []string `yaml:"paths" json:"paths"`
 }
 
 func Load() (*Config, error) {

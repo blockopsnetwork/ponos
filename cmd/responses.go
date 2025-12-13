@@ -8,13 +8,7 @@ import (
 	"github.com/slack-go/slack"
 )
 
-type SlashCommandResponse struct {
-	ResponseType string        `json:"response_type"`
-	Text         string        `json:"text,omitempty"`
-	Blocks       []slack.Block `json:"blocks,omitempty"`
-}
-
-func BuildReleaseNotificationBlocks(payload ReleasesWebhookPayload, summary *AgentSummary, prURL ...string) []slack.Block {
+func buildReleaseNotificationBlocks(payload ReleasesWebhookPayload, summary *AgentSummary, prURL ...string) []slack.Block {
 	var repo Repository
 	var release ReleaseInfo
 
@@ -143,7 +137,7 @@ func formatStructuredConfigChanges(instructions []ConfigChangeInstruction) strin
 	return strings.TrimSpace(builder.String())
 }
 
-func BuildPRContent(networkName, releaseTag, botName string, summary *AgentSummary, release *ReleaseInfo) (title, body, commitMessage string) {
+func buildPRContent(networkName, releaseTag, botName string, summary *AgentSummary, release *ReleaseInfo) (title, body, commitMessage string) {
 	if botName == "" {
 		botName = "Ponos"
 	}

@@ -8,7 +8,14 @@ build-ponos:
 
 run: build-ponos
 	@echo "Running Ponos Server..."
-	go run cmd/*.go server
+	go run ./cmd server
 
 clean:
 	rm -rf $(PONOS_DIR)/bin
+
+docker-build:
+	docker build -t blockopsnetwork/ponos-server:latest .
+
+docker-push: docker-build
+	docker push blockopsnetwork/ponos-server:latest
+

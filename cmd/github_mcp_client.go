@@ -17,8 +17,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/blockops-sh/ponos/config"
@@ -33,40 +31,18 @@ const (
 	githubAPIURL          = "https://api.github.com"
 	defaultConnectTimeout = 10 * time.Second
 	defaultRequestTimeout = 60 * time.Second
+	keepAliveTimeout      = 30 * time.Second
+	expectContinueTimeout = 5 * time.Second
+	idleConnTimeout       = 90 * time.Second
+	initializeTimeout     = 30 * time.Second
+	defaultLocalhost      = "http://localhost:3001"
+	jsonRPCVersion        = "2.0"
+	clientVersion         = "1.0.0"
+	gitHubConflictStatus  = "422"
+	rateLimitRemaining    = "X-RateLimit-Remaining"
+	rateLimitReset        = "X-RateLimit-Reset"
 )
 
-type GitHubMCPClient struct {
-	baseURL        string
-	sseURL         string
-	messagesURL    string
-	token          string
-	client         *http.Client
-	logger         *slog.Logger
-	sessionID      string
-	appID          string
-	installID      string
-	pemKey         string
-	botName        string
-	clientName     string
-	userAgent      string
-	cachedToken    string
-	tokenExpiry    time.Time
-	requestTimeout time.Duration
-	connectTimeout time.Duration
-	authMode       string
-	authModeLogged bool
-
-	ctx     context.Context
-	cancel  context.CancelFunc
-	sseBody io.ReadCloser
-
-	pendingMu      sync.Mutex
-	pending        map[int]chan mcpEnvelope
-	requestCounter atomic.Int64
-	connectMu      sync.Mutex
-
-	endpointCh chan string
-}
 
 func BuildGitHubMCPClient(cfg *config.Config, logger *slog.Logger) *GitHubMCPClient {
 	return NewGitHubMCPClient(
@@ -80,34 +56,6 @@ func BuildGitHubMCPClient(cfg *config.Config, logger *slog.Logger) *GitHubMCPCli
 	)
 }
 
-type MCPRequest struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      int         `json:"id"`
-	Method  string      `json:"method"`
-	Params  interface{} `json:"params,omitempty"`
-}
-
-type MCPResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      int         `json:"id"`
-	Result  interface{} `json:"result,omitempty"`
-	Error   *MCPError   `json:"error,omitempty"`
-}
-
-type MCPError struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-}
-
-type mcpEnvelope struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      *int            `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  interface{}     `json:"result,omitempty"`
-	Error   *MCPError       `json:"error,omitempty"`
-}
 
 type ToolCallParams struct {
 	Name      string                 `json:"name"`
@@ -126,12 +74,12 @@ func NewGitHubMCPClient(serverURL, token, appID, installID, pemKey, botName stri
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   defaultConnectTimeout,
-			KeepAlive: 30 * time.Second,
+			KeepAlive: keepAliveTimeout,
 		}).DialContext,
 		TLSHandshakeTimeout:   defaultConnectTimeout,
 		ResponseHeaderTimeout: defaultRequestTimeout,
-		ExpectContinueTimeout: 5 * time.Second,
-		IdleConnTimeout:       90 * time.Second,
+		ExpectContinueTimeout: expectContinueTimeout,
+		IdleConnTimeout:       idleConnTimeout,
 		Proxy:                 http.ProxyFromEnvironment,
 	}
 
@@ -162,7 +110,7 @@ func NewGitHubMCPClient(serverURL, token, appID, installID, pemKey, botName stri
 func normalizeServerURL(serverURL string) (string, string) {
 	trimmed := strings.TrimSpace(serverURL)
 	if trimmed == "" {
-		trimmed = "http://localhost:3001"
+		trimmed = defaultLocalhost
 	}
 
 	trimmed = strings.TrimRight(trimmed, "/")
@@ -174,7 +122,7 @@ func normalizeServerURL(serverURL string) (string, string) {
 	}
 
 	if base == "" {
-		base = "http://localhost:3001"
+		base = defaultLocalhost
 	}
 
 	return base, trimmed
@@ -222,7 +170,7 @@ func (g *GitHubMCPClient) CreateBranch(ctx context.Context, owner, repo, branchN
 		errMsg := strings.ToLower(err.Error())
 		if strings.Contains(errMsg, "reference already exists") ||
 			strings.Contains(errMsg, "already exists") ||
-			strings.Contains(errMsg, "422") {
+			strings.Contains(errMsg, gitHubConflictStatus) {
 			g.logger.Info("Branch already exists, continuing", "branch", branchName, "owner", owner, "repo", repo)
 			return nil
 		}
@@ -410,11 +358,11 @@ func (g *GitHubMCPClient) resolveEndpoint(endpoint string) (string, error) {
 }
 
 func (g *GitHubMCPClient) initializeSession() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), initializeTimeout)
 	defer cancel()
 
 	request := MCPRequest{
-		JSONRPC: "2.0",
+		JSONRPC: jsonRPCVersion,
 		Method:  "initialize",
 		Params: map[string]interface{}{
 			"protocolVersion": mcpProtocolVersion,
@@ -423,7 +371,7 @@ func (g *GitHubMCPClient) initializeSession() error {
 			},
 			"clientInfo": map[string]interface{}{
 				"name":    g.clientName,
-				"version": "1.0.0",
+				"version": clientVersion,
 			},
 		},
 	}
@@ -559,7 +507,7 @@ func (g *GitHubMCPClient) CallTool(ctx context.Context, toolName string, args ma
 
 func (g *GitHubMCPClient) callToolOnce(ctx context.Context, toolName string, args map[string]interface{}) (map[string]interface{}, error) {
 	request := MCPRequest{
-		JSONRPC: "2.0",
+		JSONRPC: jsonRPCVersion,
 		Method:  "tools/call",
 		Params: ToolCallParams{
 			Name:      toolName,
@@ -732,11 +680,11 @@ func (g *GitHubMCPClient) handleRateLimit(resp *http.Response) error {
 		return nil
 	}
 
-	if remaining := resp.Header.Get("X-RateLimit-Remaining"); remaining != "" && remaining != "0" {
+	if remaining := resp.Header.Get(rateLimitRemaining); remaining != "" && remaining != "0" {
 		return nil
 	}
 
-	resetAt := parseRateLimitReset(resp.Header.Get("X-RateLimit-Reset"))
+	resetAt := parseRateLimitReset(resp.Header.Get(rateLimitReset))
 	if !resetAt.IsZero() {
 		formatted := resetAt.UTC().Format(time.RFC3339)
 		g.logger.Warn("GitHub API rate limit exhausted", "resets_at", formatted)

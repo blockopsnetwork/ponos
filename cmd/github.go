@@ -9,39 +9,7 @@ import (
 
 	"github.com/blockops-sh/ponos/config"
 	"github.com/slack-go/slack"
-	"gopkg.in/yaml.v3"
 )
-
-const (
-	UpdateNetworkCmd = "/update-network"
-)
-
-type RepoConfig struct {
-	Name          string
-	DefaultBranch string
-	SourceBranch  string
-}
-
-type AgentClient interface {
-	GetLatestNetworkRelease(ctx context.Context, network string) (*NetworkReleaseInfo, error)
-	ProcessReleaseUpdate(ctx context.Context, payload ReleasesWebhookPayload) (*AgentSummary, error)
-	AnalyzeYAMLForBlockchainContainers(ctx context.Context, yamlContent string) ([]string, error)
-}
-
-type SlackClient interface {
-	PostMessage(channelID string, options ...slack.MsgOption) (string, string, error)
-}
-
-type GitHubDeployHandler struct {
-	logger      *slog.Logger
-	config      *config.Config
-	slack       SlackClient
-	agent       AgentClient
-	mcpClient   *GitHubMCPClient
-	repoConfigs map[string]RepoConfig
-	docker      *DockerOperations
-	yaml        *YAMLOperations
-}
 
 type fileInfo struct {
 	owner string
@@ -53,7 +21,6 @@ type fileCommitData struct {
 	owner   string
 	repo    string
 	path    string
-	sha     string
 	newYAML string
 }
 
@@ -80,6 +47,7 @@ type NetworkUpdateRequest struct {
 	PRTitle          string
 	PRBody           string
 	BranchPrefix     string
+	RepoConfig       *config.ProjectConfig
 }
 
 type NetworkUpdateResult struct {
@@ -100,87 +68,20 @@ func NewGitHubDeployHandler(logger *slog.Logger, cfg *config.Config, slackClient
 		mcpClient:   mcpClient,
 		docker:      NewDockerOperations(),
 		yaml:        NewYAMLOperations(),
-		repoConfigs: map[string]RepoConfig{},
 	}
 }
 
-func (h *GitHubDeployHandler) HandleChainUpdate(updateType, text, userID string) *SlashCommandResponse {
-	params := strings.Fields(text)
-	if len(params) != 1 {
-		return &SlashCommandResponse{
-			ResponseType: "ephemeral",
-			Text:         fmt.Sprintf("Usage: /%s <network>", updateType),
-		}
-	}
-	network := strings.ToLower(params[0])
 
-	go h.startNetworkUpdate(network, updateType, userID)
-
-	return &SlashCommandResponse{
-		ResponseType: "in_channel",
-		Blocks:       createUpdateStartBlocks(network, userID),
-	}
-}
-
-func (h *GitHubDeployHandler) startNetworkUpdate(network, updateType, userID string) {
-	ctx := context.Background()
-
-	if h.agent == nil {
-		h.notifyError(h.config.SlackChannel, "Nodeoperator agent not available for network updates")
-		return
-	}
-
-	releaseInfo, err := h.agent.GetLatestNetworkRelease(ctx, network)
-	if err != nil {
-		h.logger.Error("Failed to get latest release", "error", err, "network", network)
-		h.notifyError(h.config.SlackChannel, fmt.Sprintf("Failed to get latest %s release: %v", network, err))
-		return
-	}
-
-	payload := ReleasesWebhookPayload{
-		EventType:    "manual_update",
-		Username:     userID,
-		Timestamp:    time.Now().Format(time.RFC3339),
-		Repositories: []Repository{releaseInfo.Repository},
-		Releases: map[string]ReleaseInfo{
-			releaseInfo.Release.TagName: releaseInfo.Release,
-		},
-	}
-
-	summary, err := h.agent.ProcessReleaseUpdate(ctx, payload)
-	if err != nil {
-		h.logger.Error("AI agent processing failed", "error", err, "network", network)
-		h.notifyError(h.config.SlackChannel, fmt.Sprintf("AI analysis failed for %s: %v", network, err))
-		return
-	}
-
-	prURL, err := h.agentUpdatePR(ctx, payload, summary)
-	if err != nil {
-		h.logger.Error("Agent failed to create PR", "error", err)
-		h.notifyError(h.config.SlackChannel, fmt.Sprintf("Failed to create PR for %s: %v", network, err))
-		return
-	}
-
-	h.logger.Info("Network update PR created with AI analysis", "url", prURL, "network", network)
-	// Note: sendReleaseSummaryFromAgent is in bot.go and depends on Bot.
-	// We might need to move it or duplicate logic.
-	// For now, let's assume we can't call it directly on 'h.bot' anymore.
-	// We should probably inject a 'Notifier' interface or similar.
-	// But to keep it simple, I'll just post the message here using slack client directly or skip the fancy blocks for now.
-	// Actually, let's just use the slack client to post a simple success message with the link.
-	h.slack.PostMessage(h.config.SlackChannel, slack.MsgOptionText(fmt.Sprintf("Network update PR created: %s", prURL), false))
-}
 
 func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req NetworkUpdateRequest) (*NetworkUpdateResult, error) {
 	result := &NetworkUpdateResult{}
 
-	projectConfig, err := config.LoadProjectConfig("config.yaml")
-	if err != nil {
-		return result, fmt.Errorf("failed to load project config: %v", err)
+	if req.RepoConfig == nil {
+		return result, fmt.Errorf("repo config not provided")
 	}
 
 	var matchingProjects []config.Project
-	for _, project := range projectConfig.Projects {
+	for _, project := range req.RepoConfig.Projects {
 		for _, detectedNetwork := range req.DetectedNetworks {
 			if strings.EqualFold(project.Network, detectedNetwork) {
 				matchingProjects = append(matchingProjects, project)
@@ -206,18 +107,7 @@ func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req Netwo
 
 	imageToTag := make(map[string]string)
 
-	if req.ReleaseTag != "" {
-		for _, f := range filesToUpdate {
-			content, ferr := h.mcpClient.GetFileContent(ctx, f.owner, f.repo, f.path)
-			if ferr != nil {
-				continue
-			}
-			images := h.extractImageReposWithLLM(ctx, content)
-			for _, img := range images {
-				imageToTag[img] = req.ReleaseTag
-			}
-		}
-	} else {
+	if req.ReleaseTag == "" {
 		primaryNetwork := req.DetectedNetworks[0]
 		dockerResult, err := h.docker.FetchLatestStableTagsMCP(ctx, h.mcpClient, h.agent, filesToUpdate, primaryNetwork, "")
 		if err != nil {
@@ -226,7 +116,7 @@ func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req Netwo
 		imageToTag = dockerResult.ImageToTag
 	}
 
-	filesToCommit, upgrades, err := h.prepareFileUpdatesMCP(ctx, filesToUpdate, imageToTag)
+	filesToCommit, upgrades, err := h.prepareFileUpdatesMCP(ctx, filesToUpdate, imageToTag, req.ReleaseTag)
 	if err != nil {
 		return result, err
 	}
@@ -262,7 +152,7 @@ func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req Netwo
 	return result, nil
 }
 
-func (h *GitHubDeployHandler) agentUpdatePR(ctx context.Context, payload ReleasesWebhookPayload, summary *AgentSummary) (string, error) {
+func (h *GitHubDeployHandler) agentUpdatePR(ctx context.Context, payload ReleasesWebhookPayload, summary *AgentSummary, repoConfig *config.ProjectConfig) (string, error) {
 	if len(payload.Repositories) == 0 {
 		return "", fmt.Errorf("no repositories in payload")
 	}
@@ -287,7 +177,7 @@ func (h *GitHubDeployHandler) agentUpdatePR(ctx context.Context, payload Release
 		break
 	}
 
-	title, body, commitMessage := BuildPRContent(repo.NetworkName, dockerTag, h.mcpClient.botName, summary, releaseDetails)
+	title, body, commitMessage := buildPRContent(repo.NetworkName, dockerTag, h.mcpClient.botName, summary, releaseDetails)
 	if strings.TrimSpace(body) == "" {
 		h.logger.Warn("LLM analysis missing; using fallback PR body", "network", repo.NetworkName, "tag", dockerTag)
 		body = fmt.Sprintf("Automated update for %s to %s. No additional analysis provided.", repo.NetworkName, dockerTag)
@@ -300,6 +190,7 @@ func (h *GitHubDeployHandler) agentUpdatePR(ctx context.Context, payload Release
 		PRTitle:          title,
 		PRBody:           body,
 		BranchPrefix:     "ponos/ai-update",
+		RepoConfig:       repoConfig,
 	}
 
 	result, err := h.updateNetworkImages(ctx, req)
@@ -317,7 +208,7 @@ func (h *GitHubDeployHandler) notifyError(channelID, message string) {
 	}
 }
 
-func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesToUpdate []fileInfo, imageToTag map[string]string) ([]fileCommitData, []imageUpgrade, error) {
+func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesToUpdate []fileInfo, imageToTag map[string]string, releaseTag string) ([]fileCommitData, []imageUpgrade, error) {
 	var filesToCommit []fileCommitData
 	var upgrades []imageUpgrade
 
@@ -327,7 +218,21 @@ func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesTo
 			continue
 		}
 
-		newYAML, updated, uerr := h.yaml.UpdateAllImageTagsYAML(content, imageToTag)
+		// If we have a release tag, extract images and build the imageToTag map for this file
+		currentImageToTag := imageToTag
+		if releaseTag != "" {
+			images, err := h.agent.ExtractImages(ctx, content)
+			if err != nil {
+				h.logger.Warn("Failed to extract images from YAML", "error", err, "file", f.path)
+				continue
+			}
+			currentImageToTag = make(map[string]string)
+			for _, img := range images {
+				currentImageToTag[img] = releaseTag
+			}
+		}
+
+		newYAML, updated, uerr := h.yaml.UpdateAllImageTagsYAML(content, currentImageToTag)
 		if uerr != nil {
 			continue
 		}
@@ -335,52 +240,14 @@ func (h *GitHubDeployHandler) prepareFileUpdatesMCP(ctx context.Context, filesTo
 			continue
 		}
 
-		var oldToNew []imageUpgrade
-		var root yaml.Node
-		if yaml.Unmarshal([]byte(content), &root) == nil {
-			var walk func(n *yaml.Node)
-			walk = func(n *yaml.Node) {
-				if n == nil {
-					return
-				}
-				switch n.Kind {
-				case yaml.MappingNode:
-					for i := 0; i < len(n.Content)-1; i += 2 {
-						key := n.Content[i]
-						val := n.Content[i+1]
-						if key.Value == "image" && val.Kind == yaml.ScalarNode {
-							img := val.Value
-							if idx := strings.Index(img, ":"); idx > 0 {
-								repo := img[:idx]
-								if tag, ok := imageToTag[repo]; ok {
-									newVal := repo + ":" + tag
-									if img != newVal {
-										oldToNew = append(oldToNew, imageUpgrade{file: f.path, oldImg: img, newImg: newVal})
-									}
-								}
-							}
-						}
-						walk(val)
-					}
-				case yaml.SequenceNode:
-					for _, item := range n.Content {
-						walk(item)
-					}
-				}
-			}
-			if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
-				walk(root.Content[0])
-			} else {
-				walk(&root)
-			}
-		}
-		upgrades = append(upgrades, oldToNew...)
+		// Track upgrades for this file
+		fileUpgrades := h.trackImageUpgrades(content, currentImageToTag, f.path)
+		upgrades = append(upgrades, fileUpgrades...)
 
 		filesToCommit = append(filesToCommit, fileCommitData{
 			owner:   f.owner,
 			repo:    f.repo,
 			path:    f.path,
-			sha:     "",
 			newYAML: newYAML,
 		})
 	}
@@ -400,18 +267,29 @@ func (h *GitHubDeployHandler) createCommitFromFilesMCP(ctx context.Context, owne
 	return h.mcpClient.CreateCommit(ctx, owner, repo, branch, commitMsg, files)
 }
 
-func (h *GitHubDeployHandler) extractImageReposWithLLM(ctx context.Context, yamlContent string) []string {
-	if h.agent != nil {
-		if llmRepos, err := h.agent.AnalyzeYAMLForBlockchainContainers(ctx, yamlContent); err == nil && len(llmRepos) > 0 {
-			h.logger.Info("Using LLM analysis for image extraction", "repos_found", len(llmRepos))
-			return llmRepos
-		} else if err != nil {
-			h.logger.Warn("LLM analysis failed, falling back to pattern matching", "error", err)
-		} else {
-			h.logger.Info("LLM found no blockchain containers, falling back to pattern matching")
+func (h *GitHubDeployHandler) trackImageUpgrades(yamlContent string, imageToTag map[string]string, filePath string) []imageUpgrade {
+	var upgrades []imageUpgrade
+	
+	// Extract current images from YAML
+	currentImages := h.yaml.ExtractImageReposFromYAML(yamlContent)
+	
+	// Track what will be upgraded
+	for _, img := range currentImages {
+		if strings.Contains(img, ":") {
+			repo := img[:strings.Index(img, ":")]
+			if newTag, ok := imageToTag[repo]; ok {
+				newImg := repo + ":" + newTag
+				if img != newImg {
+					upgrades = append(upgrades, imageUpgrade{
+						file:   filePath,
+						oldImg: img,
+						newImg: newImg,
+					})
+				}
+			}
 		}
 	}
-
-	h.logger.Info("Using pattern matching for image extraction")
-	return h.yaml.ExtractImageReposFromYAML(yamlContent)
+	
+	return upgrades
 }
+

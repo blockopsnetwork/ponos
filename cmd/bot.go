@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -50,20 +52,29 @@ type Bot struct {
 	config        *config.Config
 	logger        *slog.Logger
 	mcpClient     *GitHubMCPClient
-	agent         *NodeOperatorAgent
+	agentCoreURL  string
+	httpClient    *http.Client
 	githubHandler *GitHubDeployHandler
 }
 
-func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, agent *NodeOperatorAgent) *Bot {
+func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client) *Bot {
+	agentCoreURL := os.Getenv("AGENT_CORE_URL")
+	if agentCoreURL == "" {
+		agentCoreURL = "http://localhost:8001"
+	}
+	
 	mcpClient := BuildGitHubMCPClient(cfg, logger)
 	bot := &Bot{
-		client:    slackClient,
-		config:    cfg,
-		logger:    logger,
-		mcpClient: mcpClient,
-		agent:     agent,
+		client:       slackClient,
+		config:       cfg,
+		logger:       logger,
+		mcpClient:    mcpClient,
+		agentCoreURL: agentCoreURL,
+		httpClient: &http.Client{
+			Timeout: 300 * time.Second,
+		},
 	}
-	bot.githubHandler = NewGitHubDeployHandler(logger, cfg, slackClient, agent, mcpClient)
+	bot.githubHandler = NewGitHubDeployHandler(logger, cfg, slackClient, bot, mcpClient)
 	return bot
 }
 
@@ -242,8 +253,6 @@ func (b *Bot) handleSlashCommand(w http.ResponseWriter, r *http.Request) {
 	var response *SlashCommandResponse
 
 	switch command {
-	case UpdateNetworkCmd:
-		response = b.githubHandler.HandleChainUpdate("network", text, userID)
 	case "/diagnose":
 		response = b.handleDiagnosticsCommand(text, userID, channelID)
 	default:
@@ -362,7 +371,7 @@ func (b *Bot) handleMCPToolCall(w http.ResponseWriter, mcpRequest MCPRequest) {
 }
 
 func (b *Bot) sendReleaseSummaryFromAgent(channel string, payload ReleasesWebhookPayload, summary *AgentSummary, prURL ...string) {
-	blocks := BuildReleaseNotificationBlocks(payload, summary, prURL...)
+	blocks := buildReleaseNotificationBlocks(payload, summary, prURL...)
 
 	if _, _, err := b.client.PostMessage(channel, slack.MsgOptionBlocks(blocks...)); err != nil {
 		b.logger.Error("failed to send release summary to Slack",
@@ -446,7 +455,7 @@ func (b *Bot) triggerDiagnostics(service, channelID string) error {
 		return fmt.Errorf("diagnostics service reported failure: %s", diagResp.Error)
 	}
 
-	blocks := b.buildDiagnosticsBlocks(service, diagResp.Result)
+	blocks := b.slackDiagnosticMessageBlock(service, diagResp.Result)
 
 	if _, _, err := b.client.PostMessage(
 		channelID,
@@ -458,7 +467,7 @@ func (b *Bot) triggerDiagnostics(service, channelID string) error {
 	return nil
 }
 
-func (b *Bot) buildDiagnosticsBlocks(service string, result DiagnosticsResult) []slack.Block {
+func (b *Bot) slackDiagnosticMessageBlock(service string, result DiagnosticsResult) []slack.Block {
 	var fields []*slack.TextBlockObject
 
 	if result.Namespace != "" {
@@ -519,6 +528,12 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 	ack := fmt.Sprintf(":wave: <@%s> working on \"%s\" …", userID, userMessage)
 	b.postThreadedSlackMessage(channel, threadTS, ack)
 
+	// Check if agent-core URL is configured
+	if b.agentCoreURL == "" {
+		b.postThreadedSlackMessage(channel, threadTS, ":x: Agent service is not available. Please check if agent-core is running.")
+		return
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -527,11 +542,12 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 
 	go func() {
 		defer close(updates)
-		errCh <- b.agent.ProcessConversationWithStreaming(ctx, userMessage, updates)
+		errCh <- b.StreamConversation(ctx, userMessage, nil, updates)
 	}()
 
 	var finalResponse string
 	var toolSummaries []string
+	var toolExecutionCount = make(map[string]int)
 
 	for update := range updates {
 		switch update.Type {
@@ -541,20 +557,31 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 			}
 		case "tool_start":
 			if update.Tool != "" {
-				status := fmt.Sprintf(":gear: Running *%s*…", formatToolName(update.Tool))
-				b.postThreadedSlackMessage(channel, threadTS, status)
+				toolExecutionCount[update.Tool]++
+				
+				// Only notify for the first execution of each tool type, or every 3rd execution
+				if toolExecutionCount[update.Tool] == 1 {
+					status := fmt.Sprintf(":gear: Running *%s*…", formatToolName(update.Tool))
+					b.postThreadedSlackMessage(channel, threadTS, status)
+				} else if toolExecutionCount[update.Tool]%3 == 0 {
+					status := fmt.Sprintf(":gear: Still working with *%s* (%d attempts)…", formatToolName(update.Tool), toolExecutionCount[update.Tool])
+					b.postThreadedSlackMessage(channel, threadTS, status)
+				}
 			}
 		case "tool_result":
 			summary := update.Summary
 			if summary == "" {
 				summary = update.Message
 			}
-			if summary != "" {
+			if summary != "" && len(summary) < 500 { // Don't show overly long summaries in tool list
 				icon := ":white_check_mark:"
 				if !update.Success {
 					icon = ":x:"
 				}
-				toolSummaries = append(toolSummaries, fmt.Sprintf("%s %s", icon, summary))
+				// Only show meaningful summaries, not raw command output
+				if !strings.Contains(summary, "'success': True, 'command':") {
+					toolSummaries = append(toolSummaries, fmt.Sprintf("%s %s", icon, summary))
+				}
 			}
 		case "todo_update":
 			if len(update.Todos) > 0 {
@@ -574,8 +601,11 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 		finalResponse = "Done! Let me know if you need anything else."
 	}
 
-	if len(toolSummaries) > 0 {
+	// Only show tool summary if there are meaningful results and not too many
+	if len(toolSummaries) > 0 && len(toolSummaries) <= 5 {
 		finalResponse = fmt.Sprintf("%s\n\n*Tool summary:*\n%s", finalResponse, strings.Join(toolSummaries, "\n"))
+	} else if len(toolSummaries) > 5 {
+		finalResponse = fmt.Sprintf("%s\n\n*Executed %d tools successfully.*", finalResponse, len(toolSummaries))
 	}
 
 	blocks := []slack.Block{
@@ -609,11 +639,14 @@ func (b *Bot) postThreadedSlackMessage(channel, threadTS, text string) {
 
 	opts := []slack.MsgOption{slack.MsgOptionText(text, false)}
 	if threadTS != "" {
+		// Use thread timestamp to reply in thread
 		opts = append(opts, slack.MsgOptionTS(threadTS))
 	}
 
-	if _, _, err := b.client.PostMessage(channel, opts...); err != nil {
-		b.logger.Error("failed to post Slack message", "error", err, "channel", channel)
+	if _, timestamp, err := b.client.PostMessage(channel, opts...); err != nil {
+		b.logger.Error("failed to post Slack message", "error", err, "channel", channel, "thread_ts", threadTS)
+	} else {
+		b.logger.Debug("posted threaded message", "channel", channel, "thread_ts", threadTS, "new_ts", timestamp)
 	}
 }
 
@@ -635,4 +668,328 @@ func formatToolName(name string) string {
 		return "tool"
 	}
 	return strings.ReplaceAll(name, "_", " ")
+}
+
+
+func (b *Bot) ProcessReleaseUpdate(ctx context.Context, payload ReleasesWebhookPayload) (*AgentSummary, error) {
+	configPath := os.Getenv("CONFIG_YAML_PATH")
+	if configPath == "" {
+		configPath = "repo-config.yaml"
+	}
+	repoConfig, err := config.LoadProjectConfig(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load repo config: %w", err)
+	}
+
+	request := map[string]any{
+		"repositories": payload.Repositories,
+		"releases":     payload.Releases,
+		"event_type":   payload.EventType,
+		"username":     payload.Username,
+		"repo_config":  repoConfig,
+	}
+
+	requestBody, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/blockchain/analyze-release", b.agentCoreURL)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request to agent-core failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("agent-core returned error status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var analysisResult AgentSummary
+	if err := json.NewDecoder(resp.Body).Decode(&analysisResult); err != nil {
+		return nil, fmt.Errorf("failed to decode agent-core response: %w", err)
+	}
+
+	if !analysisResult.Success {
+		return nil, fmt.Errorf("agent-core analysis failed: %s", analysisResult.Error)
+	}
+
+	return &analysisResult, nil
+}
+
+func (b *Bot) ExtractImages(ctx context.Context, yamlContent string) ([]string, error) {
+	prompt := fmt.Sprintf(`You are a blockchain infrastructure expert. Analyze this YAML file and identify ONLY the main blockchain node containers.
+
+YAML Content:
+%s
+
+Return only a JSON array of image repository names (without tags): ["repo1/image1", "repo2/image2"]
+If no blockchain containers found, return: []`, yamlContent)
+
+	request := map[string]any{
+		"message": prompt,
+		"context": map[string]any{
+			"source":    "ponos-yaml-analysis",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"user_type": "blockchain_operator",
+		},
+	}
+
+	requestBody, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/agent/simple", b.agentCoreURL)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request to agent-core failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("agent-core returned error status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var response map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode agent-core response: %w", err)
+	}
+
+	content, ok := response["content"].(string)
+	if !ok {
+		return nil, fmt.Errorf("invalid response format from agent-core")
+	}
+
+	// Parse JSON array from response
+	var repos []string
+	if err := b.extractAndUnmarshalJSON(content, &repos); err != nil {
+		b.logger.Warn("Failed to parse YAML analysis response", "error", err, "response", content)
+		return []string{}, nil
+	}
+	return repos, nil
+}
+
+func (b *Bot) StreamConversation(ctx context.Context, userMessage string, conversationHistory []map[string]string, updates chan<- StreamingUpdate) error {
+	configPath := os.Getenv("CONFIG_YAML_PATH")
+	if configPath == "" {
+		configPath = "repo-config.yaml"
+	}
+	repoConfig, err := config.LoadProjectConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load repo config: %w", err)
+	}
+
+	request := map[string]any{
+		"message": userMessage,
+		"context": map[string]any{
+			"source":    "ponos-bot",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"user_type": "blockchain_operator",
+			"capabilities": []string{
+				"network_upgrades",
+				"file_operations",
+				"system_commands",
+				"blockchain_analysis",
+			},
+		},
+		"repo_config": repoConfig,
+	}
+
+	if len(conversationHistory) > 0 {
+		request["conversation_history"] = conversationHistory
+		request["session_id"] = nil
+	}
+
+	requestBody, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/agent/stream", b.agentCoreURL)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("User-Agent", "Ponos-Bot/1.0")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("connection failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	return b.processStreamingResponse(resp.Body, updates)
+}
+
+func (b *Bot) processStreamingResponse(body io.Reader, updates chan<- StreamingUpdate) error {
+	scanner := bufio.NewScanner(body)
+	var assistantMessageID string
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		dataStr := strings.TrimPrefix(line, "data: ")
+		var streamEvent map[string]any
+
+		if err := json.Unmarshal([]byte(dataStr), &streamEvent); err != nil {
+			b.logger.Warn("Failed to parse stream event", "error", err)
+			continue
+		}
+
+		eventType, ok := streamEvent["type"].(string)
+		if !ok {
+			continue
+		}
+
+		message, _ := streamEvent["message"].(string)
+
+		switch eventType {
+		case "thinking":
+			updates <- StreamingUpdate{Type: "thinking", Message: message}
+		case "tool_start":
+			if tool, ok := streamEvent["tool"].(string); ok {
+				updates <- StreamingUpdate{
+					Type:    "tool_start",
+					Message: fmt.Sprintf("Running %s", tool),
+					Tool:    tool,
+				}
+			}
+		case "tool_result":
+			if tool, ok := streamEvent["tool"].(string); ok {
+				success, _ := streamEvent["success"].(bool)
+				summary, _ := streamEvent["summary"].(string)
+				updates <- StreamingUpdate{
+					Type:    "tool_result",
+					Message: fmt.Sprintf("%s completed", tool),
+					Tool:    tool,
+					Success: success,
+					Summary: summary,
+				}
+			}
+		case "assistant":
+			if assistantMessageID == "" {
+				assistantMessageID = generateID("msg")
+				updates <- StreamingUpdate{
+					Type:        "assistant",
+					Message:     message,
+					MessageID:   assistantMessageID,
+					IsAppending: false,
+				}
+			} else {
+				updates <- StreamingUpdate{
+					Type:      "stream_append",
+					Message:   message,
+					MessageID: assistantMessageID,
+				}
+			}
+		case "status":
+			updates <- StreamingUpdate{Type: "status", Message: message}
+		case "todo_update":
+			var todos []TodoItem
+			if todosInterface, ok := streamEvent["todos"].([]any); ok {
+				for _, todoInterface := range todosInterface {
+					if todoMap, ok := todoInterface.(map[string]any); ok {
+						todo := TodoItem{
+							Content:    b.getStringFromMap(todoMap, "content"),
+							Status:     b.getStringFromMap(todoMap, "status"),
+							ActiveForm: b.getStringFromMap(todoMap, "activeForm"),
+						}
+						todos = append(todos, todo)
+					}
+				}
+			}
+			toolName, _ := streamEvent["tool_name"].(string)
+			updates <- StreamingUpdate{
+				Type:     "todo_update",
+				Message:  message,
+				Todos:    todos,
+				ToolName: toolName,
+			}
+		case "complete":
+			sessionID, _ := streamEvent["session_id"].(string)
+			checkpointID, _ := streamEvent["checkpoint_id"].(string)
+			updates <- StreamingUpdate{
+				Type:         "complete",
+				Message:      "Operation completed",
+				SessionID:    sessionID,
+				CheckpointID: checkpointID,
+			}
+		case "error":
+			return fmt.Errorf("agent-core error: %s", message)
+		}
+	}
+
+	return scanner.Err()
+}
+
+func (b *Bot) extractAndUnmarshalJSON(input string, target any) error {
+	input = strings.TrimSpace(input)
+	
+	// Handle markdown code blocks
+	if strings.HasPrefix(input, "```") {
+		lines := strings.Split(input, "\n")
+		if len(lines) >= 2 {
+			if strings.HasPrefix(lines[0], "```") {
+				lines = lines[1:]
+			}
+			if len(lines) > 0 && strings.HasPrefix(lines[len(lines)-1], "```") {
+				lines = lines[:len(lines)-1]
+			}
+			input = strings.Join(lines, "\n")
+		}
+	}
+
+	// Find first '{' or '['
+	startIdx := strings.IndexAny(input, "{[")
+	if startIdx == -1 {
+		return fmt.Errorf("no JSON start found")
+	}
+
+	// Find last '}' or ']'
+	endIdx := strings.LastIndexAny(input, "}]")
+	if endIdx == -1 || endIdx <= startIdx {
+		return fmt.Errorf("no JSON end found")
+	}
+
+	jsonStr := input[startIdx : endIdx+1]
+	return json.Unmarshal([]byte(jsonStr), target)
+}
+
+func (b *Bot) getStringFromMap(m map[string]any, key string) string {
+	if val, ok := m[key]; ok && val != nil {
+		if str, ok := val.(string); ok {
+			return str
+		}
+	}
+	return ""
 }

@@ -25,7 +25,10 @@ func (d *DockerOperations) FetchLatestStableTagsMCP(ctx context.Context, mcpClie
 		if ferr != nil {
 			continue
 		}
-		images := d.extractImageReposWithLLM(ctx, agent, content)
+		images, err := agent.ExtractImages(ctx, content)
+		if err != nil {
+			continue
+		}
 		for _, img := range images {
 			imageToTag[img] = ""
 		}
@@ -111,16 +114,6 @@ func (d *DockerOperations) fetchLatestTagFromNodeReleases(network, client string
 	return "", fmt.Errorf("docker tag not found for network=%s client=%s", network, client)
 }
 
-func (d *DockerOperations) extractImageReposWithLLM(ctx context.Context, agent AgentClient, yamlContent string) []string {
-	if agent != nil {
-		if llmRepos, err := agent.AnalyzeYAMLForBlockchainContainers(ctx, yamlContent); err == nil && len(llmRepos) > 0 {
-			return llmRepos
-		}
-	}
-
-	yamlOps := NewYAMLOperations()
-	return yamlOps.ExtractImageReposFromYAML(yamlContent)
-}
 
 func ctxWithTimeout() context.Context {
 	ctx, _ := context.WithTimeout(context.Background(), 15*time.Second)
