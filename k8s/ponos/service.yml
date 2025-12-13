@@ -2,15 +2,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: ponos
-  namespace: ponos
+  name: ponos-server
+  namespace: ponos-server
   labels:
-    app: ponos
+    app: ponos-server
 spec:
   selector:
-    app: ponos
+    app: ponos-server
   ports:
-    - name: ponos-metrics
+    - name: ponos-server-metrics
       protocol: TCP
       port: 8000
       targetPort: 8700

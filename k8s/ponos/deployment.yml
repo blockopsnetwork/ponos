@@ -1,13 +1,13 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ponos
-  namespace: ponos
+  name: ponos-server
+  namespace: ponos-server
   annotations:
     prometheus.io/port: '8700'
     prometheus.io/scrape: 'true'
   labels:
-    app: ponos
+    app: ponos-server
 spec:
   strategy:
     type: RollingUpdate
@@ -17,11 +17,11 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ponos
+      app: ponos-server
   template:
     metadata:
       labels:
-        app: ponos
+        app: ponos-server
     spec:
       tolerations:
         - effect: NoSchedule
@@ -29,8 +29,16 @@ spec:
           key: blockops
           value: testnet
       containers:
-      - name: ponos
-        image: ##IMAGE_URL##
+      - name: ponos-server
+        image: blockopsnetwork/ponos-server:latest
+        imagePullPolicy: Always
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
         volumeMounts:
           - name: github-pem
             mountPath: /app/gh.pem
@@ -78,12 +86,3 @@ spec:
         - name: github-pem
           secret:
             secretName: github-pem-secret
-
-
-
-
-
-
-
-
-

@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+
+	"github.com/blockops-sh/ponos/config"
 )
 
 func min(a, b int) int {
@@ -16,14 +19,12 @@ func min(a, b int) int {
 
 type WebhookHandler struct {
 	bot                  *Bot
-	agent                *NodeOperatorAgent
 	AgentFeedbackChannel string
 }
 
 func NewWebhookHandler(bot *Bot) *WebhookHandler {
 	return &WebhookHandler{
 		bot:                  bot,
-		agent:                bot.agent,
 		AgentFeedbackChannel: "sre-tasks",
 	}
 }
@@ -55,26 +56,31 @@ func (wh *WebhookHandler) handleReleasesWebhook(w http.ResponseWriter, r *http.R
 		"repositories", len(payload.Repositories),
 		"releases", len(payload.Releases))
 
-	if wh.agent != nil {
-		summary, err := wh.agent.ProcessReleaseUpdate(r.Context(), payload)
-		if err != nil {
-			wh.bot.logger.Error("agent processing failed", "error", err)
-		} else {
-
-			go func() {
-				ctx := context.Background()
-				prURL, err := wh.bot.githubHandler.agentUpdatePR(ctx, payload, summary)
-				if err != nil {
-					wh.bot.logger.Error("Agent failed to create PR", "error", err)
-					wh.bot.sendReleaseSummaryFromAgent(wh.AgentFeedbackChannel, payload, summary)
-				} else {
-					wh.bot.logger.Info("PR created", "url", prURL)
-					wh.bot.sendReleaseSummaryFromAgent(wh.AgentFeedbackChannel, payload, summary, prURL)
-				}
-			}()
-		}
+	summary, err := wh.bot.ProcessReleaseUpdate(r.Context(), payload)
+	if err != nil {
+		wh.bot.logger.Error("agent processing failed", "error", err)
 	} else {
-		wh.bot.logger.Info("nodeagent not available, skipping processing")
+
+		go func() {
+			ctx := context.Background()
+			configPath := os.Getenv("CONFIG_YAML_PATH")
+			if configPath == "" {
+				configPath = "repo-config.yaml"
+			}
+			repoConfig, err := config.LoadProjectConfig(configPath)
+			if err != nil {
+				wh.bot.logger.Error("failed to load repo config for webhook", "error", err)
+				return
+			}
+			prURL, err := wh.bot.githubHandler.agentUpdatePR(ctx, payload, summary, repoConfig)
+			if err != nil {
+				wh.bot.logger.Error("Agent failed to create PR", "error", err)
+				wh.bot.sendReleaseSummaryFromAgent(wh.AgentFeedbackChannel, payload, summary)
+			} else {
+				wh.bot.logger.Info("PR created", "url", prURL)
+				wh.bot.sendReleaseSummaryFromAgent(wh.AgentFeedbackChannel, payload, summary, prURL)
+			}
+		}()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
