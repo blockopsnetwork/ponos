@@ -606,6 +606,13 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.animationFrame = msg.frame
 		}
 
+	case tea.Msg:
+		if msg == "loading_done" {
+			m.loading = false
+			m.loadingMsg = ""
+			m.cancelThinking = nil
+		}
+
 	}
 
 	m.viewport, cmd = m.viewport.Update(msg)
