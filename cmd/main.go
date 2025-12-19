@@ -77,14 +77,8 @@ func runAgentTUI() {
 		os.Exit(1)
 	}
 
-	if strings.TrimSpace(cfg.GitHubMCPURL) == "" {
-		logger.Warn("GITHUB_MCP_URL is empty; GitHub MCP calls may fail", "github_mcp_url", cfg.GitHubMCPURL)
-	}
-
 	api := slack.New(cfg.SlackToken)
-
-	bot := NewBot(cfg, logger, api)
-
+	bot := NewBot(cfg, logger, api, false)
 	tui := NewPonosAgentTUI(bot, logger)
 	tui.Start()
 }
