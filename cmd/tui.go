@@ -291,33 +291,15 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
-		case "up", "k":
-			m.viewport.ScrollUp(1)
-			m.autoScroll = false
-			return m, nil
-		case "down", "j":
-			m.viewport.ScrollDown(1)
-			if m.viewport.AtBottom() {
-				m.autoScroll = true
-			}
-			return m, nil
-		case "pgup", "ctrl+u":
+		case "pgup":
 			m.viewport.HalfPageUp()
 			m.autoScroll = false
 			return m, nil
-		case "pgdown", "ctrl+d":
+		case "pgdown":
 			m.viewport.HalfPageDown()
 			if m.viewport.AtBottom() {
 				m.autoScroll = true
 			}
-			return m, nil
-		case "home", "g":
-			m.viewport.GotoTop()
-			m.autoScroll = false
-			return m, nil
-		case "end", "G":
-			m.viewport.GotoBottom()
-			m.autoScroll = true
 			return m, nil
 		}
 
@@ -622,6 +604,13 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case animationUpdate:
 		if m.loading {
 			m.animationFrame = msg.frame
+		}
+
+	case tea.Msg:
+		if msg == "loading_done" {
+			m.loading = false
+			m.loadingMsg = ""
+			m.cancelThinking = nil
 		}
 
 	}

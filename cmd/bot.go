@@ -57,13 +57,18 @@ type Bot struct {
 	githubHandler *GitHubDeployHandler
 }
 
-func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client) *Bot {
+func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, enableMCP bool) *Bot {
 	agentCoreURL := os.Getenv("AGENT_CORE_URL")
 	if agentCoreURL == "" {
-		agentCoreURL = "http://localhost:8001"
+		fmt.Println("AGENT_CORE_URL is not configured")
+		os.Exit(1)
 	}
 	
-	mcpClient := BuildGitHubMCPClient(cfg, logger)
+	var mcpClient *GitHubMCPClient
+	if enableMCP {
+		mcpClient = BuildGitHubMCPClient(cfg, logger)
+	}
+	
 	bot := &Bot{
 		client:       slackClient,
 		config:       cfg,
@@ -74,7 +79,11 @@ func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client) 
 			Timeout: 300 * time.Second,
 		},
 	}
-	bot.githubHandler = NewGitHubDeployHandler(logger, cfg, slackClient, bot, mcpClient)
+	
+	if enableMCP {
+		bot.githubHandler = NewGitHubDeployHandler(logger, cfg, slackClient, bot, mcpClient)
+	}
+	
 	return bot
 }
 
@@ -270,6 +279,20 @@ func (b *Bot) handleSlashCommand(w http.ResponseWriter, r *http.Request) {
 func (b *Bot) handleGitHubMCP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	if b.mcpClient == nil {
+		b.logger.Error("GitHub MCP client not available")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(MCPResponse{
+			JSONRPC: "2.0",
+			ID:      0,
+			Error: &MCPError{
+				Code:    -32601,
+				Message: "GitHub MCP client not available",
+			},
+		})
 		return
 	}
 
@@ -559,7 +582,6 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 			if update.Tool != "" {
 				toolExecutionCount[update.Tool]++
 				
-				// Only notify for the first execution of each tool type, or every 3rd execution
 				if toolExecutionCount[update.Tool] == 1 {
 					status := fmt.Sprintf(":gear: Running *%s*…", formatToolName(update.Tool))
 					b.postThreadedSlackMessage(channel, threadTS, status)
@@ -573,12 +595,11 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 			if summary == "" {
 				summary = update.Message
 			}
-			if summary != "" && len(summary) < 500 { // Don't show overly long summaries in tool list
+			if summary != "" && len(summary) < 500 { 
 				icon := ":white_check_mark:"
 				if !update.Success {
 					icon = ":x:"
 				}
-				// Only show meaningful summaries, not raw command output
 				if !strings.Contains(summary, "'success': True, 'command':") {
 					toolSummaries = append(toolSummaries, fmt.Sprintf("%s %s", icon, summary))
 				}

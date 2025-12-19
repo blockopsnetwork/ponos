@@ -47,7 +47,7 @@ func runServer() {
 
 	api := slack.New(cfg.SlackToken)
 
-	bot := NewBot(cfg, logger, api)
+	bot := NewBot(cfg, logger, api, true)
 
 	// TODO: For complete separattion of concerns and to ease the pain of users having to setup ngrok for webhook listeners, the whole server logic should be moved to the api backend
 	if cfg.EnableReleaseListener {
