@@ -60,7 +60,8 @@ type Bot struct {
 func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, enableMCP bool) *Bot {
 	agentCoreURL := os.Getenv("AGENT_CORE_URL")
 	if agentCoreURL == "" {
-		agentCoreURL = "http://localhost:8001"
+		logger.Error("AGENT_CORE_URL is not configured")
+		os.Exit(1)
 	}
 	
 	var mcpClient *GitHubMCPClient
@@ -582,7 +583,6 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 			if update.Tool != "" {
 				toolExecutionCount[update.Tool]++
 				
-				// Only notify for the first execution of each tool type, or every 3rd execution
 				if toolExecutionCount[update.Tool] == 1 {
 					status := fmt.Sprintf(":gear: Running *%s*…", formatToolName(update.Tool))
 					b.postThreadedSlackMessage(channel, threadTS, status)
@@ -596,12 +596,11 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 			if summary == "" {
 				summary = update.Message
 			}
-			if summary != "" && len(summary) < 500 { // Don't show overly long summaries in tool list
+			if summary != "" && len(summary) < 500 { 
 				icon := ":white_check_mark:"
 				if !update.Success {
 					icon = ":x:"
 				}
-				// Only show meaningful summaries, not raw command output
 				if !strings.Contains(summary, "'success': True, 'command':") {
 					toolSummaries = append(toolSummaries, fmt.Sprintf("%s %s", icon, summary))
 				}
