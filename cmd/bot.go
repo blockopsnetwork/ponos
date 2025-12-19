@@ -60,7 +60,7 @@ type Bot struct {
 func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, enableMCP bool) *Bot {
 	agentCoreURL := os.Getenv("AGENT_CORE_URL")
 	if agentCoreURL == "" {
-		logger.Error("AGENT_CORE_URL is not configured")
+		fmt.Println("AGENT_CORE_URL is not configured")
 		os.Exit(1)
 	}
 	
@@ -282,7 +282,6 @@ func (b *Bot) handleGitHubMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if MCP client is available
 	if b.mcpClient == nil {
 		b.logger.Error("GitHub MCP client not available")
 		w.WriteHeader(http.StatusServiceUnavailable)

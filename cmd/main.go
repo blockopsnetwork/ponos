@@ -78,10 +78,7 @@ func runAgentTUI() {
 	}
 
 	api := slack.New(cfg.SlackToken)
-
-	// TUI mode doesn't need GitHub MCP client - all GitHub operations go through agent-core
 	bot := NewBot(cfg, logger, api, false)
-
 	tui := NewPonosAgentTUI(bot, logger)
 	tui.Start()
 }
