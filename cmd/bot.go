@@ -57,13 +57,17 @@ type Bot struct {
 	githubHandler *GitHubDeployHandler
 }
 
-func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client) *Bot {
+func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, enableMCP bool) *Bot {
 	agentCoreURL := os.Getenv("AGENT_CORE_URL")
 	if agentCoreURL == "" {
 		agentCoreURL = "http://localhost:8001"
 	}
 	
-	mcpClient := BuildGitHubMCPClient(cfg, logger)
+	var mcpClient *GitHubMCPClient
+	if enableMCP {
+		mcpClient = BuildGitHubMCPClient(cfg, logger)
+	}
+	
 	bot := &Bot{
 		client:       slackClient,
 		config:       cfg,
@@ -74,7 +78,11 @@ func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client) 
 			Timeout: 300 * time.Second,
 		},
 	}
-	bot.githubHandler = NewGitHubDeployHandler(logger, cfg, slackClient, bot, mcpClient)
+	
+	if enableMCP {
+		bot.githubHandler = NewGitHubDeployHandler(logger, cfg, slackClient, bot, mcpClient)
+	}
+	
 	return bot
 }
 
@@ -270,6 +278,21 @@ func (b *Bot) handleSlashCommand(w http.ResponseWriter, r *http.Request) {
 func (b *Bot) handleGitHubMCP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Check if MCP client is available
+	if b.mcpClient == nil {
+		b.logger.Error("GitHub MCP client not available")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(MCPResponse{
+			JSONRPC: "2.0",
+			ID:      0,
+			Error: &MCPError{
+				Code:    -32601,
+				Message: "GitHub MCP client not available",
+			},
+		})
 		return
 	}
 
