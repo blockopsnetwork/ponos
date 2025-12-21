@@ -447,7 +447,6 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateHelperDropdown()
 
 	case tea.MouseMsg:
-		// Only handle wheel events for scrolling, let other mouse events pass through
 		if msg.Action == tea.MouseActionPress {
 			if msg.Button == tea.MouseButtonWheelUp {
 				m.viewport.ScrollUp(3)
@@ -462,7 +461,8 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		// Let other mouse events (selection, clicks) pass through to terminal
+		m.viewport, cmd = m.viewport.Update(msg)
+		cmds = append(cmds, cmd)
 
 	case msgResponse:
 		m.loading = false
@@ -800,6 +800,7 @@ Scrolling
 Tips
 • Type / to open the helper menu, use ↑/↓ to pick a command, press Tab to autocomplete
 • Shift+Enter inserts a newline, Enter sends your prompt, Ctrl+C exits the TUI
+• Mouse selection and copy/paste work normally in the viewport
 
 Example Prompts
 • "Upgrade polkadot archive node to the latest stable release"
