@@ -6,3 +6,4 @@ ponos.pem
 dist/
 config.yaml
 repo-config.yaml
+bin/
