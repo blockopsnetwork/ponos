@@ -58,7 +58,7 @@ type Bot struct {
 }
 
 func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, enableMCP bool) *Bot {
-	agentCoreURL := os.Getenv("AGENT_CORE_URL")
+	agentCoreURL := cfg.AgentCoreURL
 	if agentCoreURL == "" {
 		fmt.Println("AGENT_CORE_URL is not configured")
 		os.Exit(1)
