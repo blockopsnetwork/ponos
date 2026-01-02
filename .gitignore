@@ -1,9 +1,7 @@
-gh.pem 
 ./bin/ponos
-ponos.pem
+*.pem
 .env
 # Added by goreleaser init:
 dist/
-config.yaml
-repo-config.yaml
+ponos.yml
 bin/

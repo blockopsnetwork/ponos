@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
 
 	"github.com/blockops-sh/ponos/config"
 )
@@ -63,16 +62,11 @@ func (wh *WebhookHandler) handleReleasesWebhook(w http.ResponseWriter, r *http.R
 
 		go func() {
 			ctx := context.Background()
-			configPath := os.Getenv("CONFIG_YAML_PATH")
-			if configPath == "" {
-				configPath = "repo-config.yaml"
-			}
-			repoConfig, err := config.LoadProjectConfig(configPath)
-			if err != nil {
-				wh.bot.logger.Error("failed to load repo config for webhook", "error", err)
+			if len(wh.bot.config.Projects) == 0 {
+				wh.bot.logger.Error("no projects configured")
 				return
 			}
-			prURL, err := wh.bot.githubHandler.agentUpdatePR(ctx, payload, summary, repoConfig)
+			prURL, err := wh.bot.githubHandler.agentUpdatePR(ctx, payload, summary, &config.ProjectConfig{Projects: wh.bot.config.Projects})
 			if err != nil {
 				wh.bot.logger.Error("Agent failed to create PR", "error", err)
 				wh.bot.sendReleaseSummaryFromAgent(wh.AgentFeedbackChannel, payload, summary)

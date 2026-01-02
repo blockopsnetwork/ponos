@@ -114,7 +114,6 @@ func (d *DockerOperations) fetchLatestTagFromNodeReleases(network, client string
 	return "", fmt.Errorf("docker tag not found for network=%s client=%s", network, client)
 }
 
-
 func ctxWithTimeout() context.Context {
 	ctx, _ := context.WithTimeout(context.Background(), 15*time.Second)
 	return ctx

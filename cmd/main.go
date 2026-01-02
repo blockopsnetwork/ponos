@@ -60,20 +60,20 @@ func runAgentTUI() {
 
 	if err := cfg.ValidateGitHubBotConfig(); err != nil {
 		fmt.Fprintf(os.Stderr, "GitHub auth not configured: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Set either GITHUB_TOKEN (PAT) or GITHUB_APP_ID/GITHUB_INSTALL_ID/GITHUB_PEM_KEY (Github Bot auth).\n")
+		fmt.Fprintf(os.Stderr, "Set either github_token or github_app_id/github_install_id/github_pem_key in ponos.yml\n")
 		logger.Error("GitHub auth not configured", "error", err)
 		os.Exit(1)
 	}
 
 	if strings.TrimSpace(cfg.SlackToken) == "" || strings.TrimSpace(cfg.SlackSigningKey) == "" {
-		fmt.Fprintf(os.Stderr, "Slack configuration missing: SLACK_TOKEN and SLACK_SIGNING_SECRET are required.\n")
+		fmt.Fprintf(os.Stderr, "Slack configuration missing: slack_token and slack_signing_key are required in ponos.yml\n")
 		logger.Error("Slack configuration missing", "has_token", cfg.SlackToken != "", "has_signing_key", cfg.SlackSigningKey != "")
 		os.Exit(1)
 	}
 
 	if strings.TrimSpace(cfg.AgentCoreURL) == "" {
-		fmt.Fprintf(os.Stderr, "nodeoperator api URL is not configured. Set AGENT_CORE_URL.\n")
-		logger.Error("nodeoperator api URL is not configured")
+		fmt.Fprintf(os.Stderr, "agent_core_url is not configured in ponos.yml\n")
+		logger.Error("agent_core_url is not configured")
 		os.Exit(1)
 	}
 

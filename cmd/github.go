@@ -61,17 +61,15 @@ type NetworkUpdateResult struct {
 
 func NewGitHubDeployHandler(logger *slog.Logger, cfg *config.Config, slackClient SlackClient, agent AgentClient, mcpClient *GitHubMCPClient) *GitHubDeployHandler {
 	return &GitHubDeployHandler{
-		logger:      logger,
-		config:      cfg,
-		slack:       slackClient,
-		agent:       agent,
-		mcpClient:   mcpClient,
-		docker:      NewDockerOperations(),
-		yaml:        NewYAMLOperations(),
+		logger:    logger,
+		config:    cfg,
+		slack:     slackClient,
+		agent:     agent,
+		mcpClient: mcpClient,
+		docker:    NewDockerOperations(),
+		yaml:      NewYAMLOperations(),
 	}
 }
-
-
 
 func (h *GitHubDeployHandler) updateNetworkImages(ctx context.Context, req NetworkUpdateRequest) (*NetworkUpdateResult, error) {
 	result := &NetworkUpdateResult{}
@@ -267,10 +265,10 @@ func (h *GitHubDeployHandler) createCommitFromFilesMCP(ctx context.Context, owne
 
 func (h *GitHubDeployHandler) trackImageUpgrades(yamlContent string, imageToTag map[string]string, filePath string) []imageUpgrade {
 	var upgrades []imageUpgrade
-	
+
 	// Extract current images from YAML
 	currentImages := h.yaml.ExtractImageReposFromYAML(yamlContent)
-	
+
 	for _, img := range currentImages {
 		if strings.Contains(img, ":") {
 			repo := img[:strings.Index(img, ":")]
@@ -286,7 +284,7 @@ func (h *GitHubDeployHandler) trackImageUpgrades(yamlContent string, imageToTag 
 			}
 		}
 	}
-	
+
 	return upgrades
 }
 
@@ -295,13 +293,13 @@ func (h *GitHubDeployHandler) generateBranchName(req NetworkUpdateRequest, fileC
 	if len(req.DetectedNetworks) > 0 {
 		networkName = req.DetectedNetworks[0]
 	}
-	
+
 	cleanTag := strings.ReplaceAll(req.ReleaseTag, ".", "-")
 	cleanTag = strings.ReplaceAll(cleanTag, ":", "-")
 	cleanTag = strings.TrimPrefix(cleanTag, "v")
-	
+
 	branchName := fmt.Sprintf("upgrade/%s-to-%s", networkName, cleanTag)
-	
+
 	timestamp := time.Now().Unix()
 	return fmt.Sprintf("%s-%d", branchName, timestamp)
 }

@@ -43,7 +43,6 @@ const (
 	rateLimitReset        = "X-RateLimit-Reset"
 )
 
-
 func BuildGitHubMCPClient(cfg *config.Config, logger *slog.Logger) *GitHubMCPClient {
 	return NewGitHubMCPClient(
 		cfg.GitHubMCPURL,
@@ -55,7 +54,6 @@ func BuildGitHubMCPClient(cfg *config.Config, logger *slog.Logger) *GitHubMCPCli
 		logger,
 	)
 }
-
 
 type ToolCallParams struct {
 	Name      string                 `json:"name"`

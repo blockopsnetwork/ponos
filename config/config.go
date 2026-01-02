@@ -5,28 +5,29 @@ import (
 	"os"
 	"strings"
 
-	"github.com/kelseyhightower/envconfig"
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	GitHubToken     string `envconfig:"GITHUB_TOKEN" default:""`
-	GitHubAppID     string `envconfig:"GITHUB_APP_ID" default:""`
-	GitHubInstallID string `envconfig:"GITHUB_INSTALL_ID" default:""`
-	GitHubPEMKey    string `envconfig:"GITHUB_PEM_KEY" default:""`
-	GitHubBotName   string `envconfig:"GITHUB_BOT_NAME" default:"ponos-bot"`
-	GitHubMCPURL    string `envconfig:"GITHUB_MCP_URL" default:"http://localhost:3001"`
+	GitHubToken     string `envconfig:"GITHUB_TOKEN" default:"" yaml:"github_token"`
+	GitHubAppID     string `envconfig:"GITHUB_APP_ID" default:"" yaml:"github_app_id"`
+	GitHubInstallID string `envconfig:"GITHUB_INSTALL_ID" default:"" yaml:"github_install_id"`
+	GitHubPEMKey    string `envconfig:"GITHUB_PEM_KEY" default:"" yaml:"github_pem_key"`
+	GitHubBotName   string `envconfig:"GITHUB_BOT_NAME" default:"ponos-bot" yaml:"github_bot_name"`
+	GitHubMCPURL    string `envconfig:"GITHUB_MCP_URL" default:"http://github-mcp.nodeoperator.ai" yaml:"github_mcp_url"`
 
-	SlackToken      string `envconfig:"SLACK_TOKEN" default:""`
-	SlackSigningKey string `envconfig:"SLACK_SIGNING_SECRET" default:""`
-	SlackVerifyTok  string `envconfig:"SLACK_VERIFICATION_TOKEN" default:""`
-	SlackChannel    string `envconfig:"SLACK_CHANNEL" default:"sre-tasks"`
+	SlackToken      string `envconfig:"SLACK_TOKEN" default:"" yaml:"slack_token"`
+	SlackSigningKey string `envconfig:"SLACK_SIGNING_SECRET" default:"" yaml:"slack_signing_key"`
+	SlackVerifyTok  string `envconfig:"SLACK_VERIFICATION_TOKEN" default:"" yaml:"slack_verify_token"`
+	SlackChannel    string `envconfig:"SLACK_CHANNEL" default:"sre-tasks" yaml:"slack_channel"`
 
-	AgentCoreURL string `envconfig:"AGENT_CORE_URL" default:"http://localhost:8001"`
+	AgentCoreURL string `envconfig:"AGENT_CORE_URL" default:"http://api.nodeoperator.ai" yaml:"agent_core_url"`
 
-	Port string `envconfig:"PORT" default:"8080"`
+	Port string `envconfig:"PORT" default:"8080" yaml:"port"`
 
-	EnableReleaseListener bool `envconfig:"ENABLE_RELEASE_LISTENER" default:"false"`
+	EnableReleaseListener bool `envconfig:"ENABLE_RELEASE_LISTENER" default:"false" yaml:"enable_release_listener"`
+
+	Projects []Project `yaml:"projects"`
 }
 
 type ProjectConfig struct {
@@ -44,11 +45,20 @@ type Project struct {
 }
 
 func Load() (*Config, error) {
-	var cfg Config
-	err := envconfig.Process("", &cfg)
-	if err != nil {
-		return nil, err
+	if _, err := os.Stat("ponos.yml"); err != nil {
+		return nil, fmt.Errorf("Ponos config (ponos.yml) missing, ensure you add the ponos.yml in the root directory")
 	}
+	
+	data, err := os.ReadFile("ponos.yml")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read ponos.yml: %w", err)
+	}
+	
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("invalid ponos.yml format: %w", err)
+	}
+	
 	cfg.Sanitize()
 	return &cfg, nil
 }

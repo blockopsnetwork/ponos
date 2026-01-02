@@ -58,32 +58,31 @@ type Bot struct {
 }
 
 func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, enableMCP bool) *Bot {
-	agentCoreURL := os.Getenv("AGENT_CORE_URL")
-	if agentCoreURL == "" {
-		fmt.Println("AGENT_CORE_URL is not configured")
+	if cfg.AgentCoreURL == "" {
+		fmt.Println("agent_core_url is not configured in ponos.yml")
 		os.Exit(1)
 	}
-	
+
 	var mcpClient *GitHubMCPClient
 	if enableMCP {
 		mcpClient = BuildGitHubMCPClient(cfg, logger)
 	}
-	
+
 	bot := &Bot{
 		client:       slackClient,
 		config:       cfg,
 		logger:       logger,
 		mcpClient:    mcpClient,
-		agentCoreURL: agentCoreURL,
+		agentCoreURL: cfg.AgentCoreURL,
 		httpClient: &http.Client{
 			Timeout: 300 * time.Second,
 		},
 	}
-	
+
 	if enableMCP {
 		bot.githubHandler = NewGitHubDeployHandler(logger, cfg, slackClient, bot, mcpClient)
 	}
-	
+
 	return bot
 }
 
@@ -581,7 +580,7 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 		case "tool_start":
 			if update.Tool != "" {
 				toolExecutionCount[update.Tool]++
-				
+
 				if toolExecutionCount[update.Tool] == 1 {
 					status := fmt.Sprintf(":gear: Running *%s*…", formatToolName(update.Tool))
 					b.postThreadedSlackMessage(channel, threadTS, status)
@@ -595,7 +594,7 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 			if summary == "" {
 				summary = update.Message
 			}
-			if summary != "" && len(summary) < 500 { 
+			if summary != "" && len(summary) < 500 {
 				icon := ":white_check_mark:"
 				if !update.Success {
 					icon = ":x:"
@@ -691,23 +690,13 @@ func formatToolName(name string) string {
 	return strings.ReplaceAll(name, "_", " ")
 }
 
-
 func (b *Bot) ProcessReleaseUpdate(ctx context.Context, payload ReleasesWebhookPayload) (*AgentSummary, error) {
-	configPath := os.Getenv("CONFIG_YAML_PATH")
-	if configPath == "" {
-		configPath = "repo-config.yaml"
-	}
-	repoConfig, err := config.LoadProjectConfig(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load repo config: %w", err)
-	}
-
 	request := map[string]any{
 		"repositories": payload.Repositories,
 		"releases":     payload.Releases,
 		"event_type":   payload.EventType,
 		"username":     payload.Username,
-		"repo_config":  repoConfig,
+		"repo_config":  &config.ProjectConfig{Projects: b.config.Projects},
 	}
 
 	requestBody, err := json.Marshal(request)
@@ -810,14 +799,6 @@ If no blockchain containers found, return: []`, yamlContent)
 }
 
 func (b *Bot) StreamConversation(ctx context.Context, userMessage string, conversationHistory []map[string]string, updates chan<- StreamingUpdate) error {
-	configPath := os.Getenv("CONFIG_YAML_PATH")
-	if configPath == "" {
-		configPath = "repo-config.yaml"
-	}
-	repoConfig, err := config.LoadProjectConfig(configPath)
-	if err != nil {
-		return fmt.Errorf("failed to load repo config: %w", err)
-	}
 
 	request := map[string]any{
 		"message": userMessage,
@@ -832,7 +813,7 @@ func (b *Bot) StreamConversation(ctx context.Context, userMessage string, conver
 				"blockchain_analysis",
 			},
 		},
-		"repo_config": repoConfig,
+		"repo_config": &config.ProjectConfig{Projects: b.config.Projects},
 	}
 
 	if len(conversationHistory) > 0 {
@@ -975,7 +956,7 @@ func (b *Bot) processStreamingResponse(body io.Reader, updates chan<- StreamingU
 
 func (b *Bot) extractAndUnmarshalJSON(input string, target any) error {
 	input = strings.TrimSpace(input)
-	
+
 	// Handle markdown code blocks
 	if strings.HasPrefix(input, "```") {
 		lines := strings.Split(input, "\n")
