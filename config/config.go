@@ -14,14 +14,14 @@ type Config struct {
 	GitHubInstallID string `envconfig:"GITHUB_INSTALL_ID" default:"" yaml:"github_install_id"`
 	GitHubPEMKey    string `envconfig:"GITHUB_PEM_KEY" default:"" yaml:"github_pem_key"`
 	GitHubBotName   string `envconfig:"GITHUB_BOT_NAME" default:"ponos-bot" yaml:"github_bot_name"`
-	GitHubMCPURL    string `envconfig:"GITHUB_MCP_URL" default:"http://localhost:3001" yaml:"github_mcp_url"`
+	GitHubMCPURL    string `envconfig:"GITHUB_MCP_URL" default:"http://github-mcp.nodeoperator.ai" yaml:"github_mcp_url"`
 
 	SlackToken      string `envconfig:"SLACK_TOKEN" default:"" yaml:"slack_token"`
 	SlackSigningKey string `envconfig:"SLACK_SIGNING_SECRET" default:"" yaml:"slack_signing_key"`
 	SlackVerifyTok  string `envconfig:"SLACK_VERIFICATION_TOKEN" default:"" yaml:"slack_verify_token"`
 	SlackChannel    string `envconfig:"SLACK_CHANNEL" default:"sre-tasks" yaml:"slack_channel"`
 
-	AgentCoreURL string `envconfig:"AGENT_CORE_URL" default:"http://localhost:8001" yaml:"agent_core_url"`
+	AgentCoreURL string `envconfig:"AGENT_CORE_URL" default:"http://api.nodeoperator.ai" yaml:"agent_core_url"`
 
 	Port string `envconfig:"PORT" default:"8080" yaml:"port"`
 
