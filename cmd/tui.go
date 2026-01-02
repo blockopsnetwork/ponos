@@ -708,7 +708,7 @@ func (m *tuiModel) updateViewportContent() {
 	if maxWidth < 20 {
 		maxWidth = 80
 	}
-	
+
 	if len(m.messages) == 0 {
 		content.WriteString("No messages yet. Type a message below to start.\n")
 		m.viewport.SetContent(content.String())
@@ -773,7 +773,7 @@ func (m *tuiModel) updateViewportContent() {
 	}
 
 	m.viewport.SetContent(content.String())
-	
+
 	if m.autoScroll || m.isStreaming {
 		m.viewport.GotoBottom()
 	}
@@ -915,7 +915,6 @@ func (tui *PonosAgentTUI) safeSendUpdate(updates chan<- StreamingUpdate, update 
 		tui.logger.Warn("Update channel blocked or closed", "update", update.Type)
 	}
 }
-
 
 func (m *tuiModel) renderTodoSection() string {
 	if len(m.currentTodos) == 0 {
@@ -1128,7 +1127,7 @@ func (m *tuiModel) renderHelperDropdown() string {
 func getToolContextualMessage(toolName string) string {
 	contextMessages := map[string]string{
 		"upgrade_blockchain_client": "Starting the node upgrade process...",
-		"create_pull_request":       "Creating a pull request with the changes...", 
+		"create_pull_request":       "Creating a pull request with the changes...",
 		"update_network_images":     "Updating container images across the network...",
 		"fetch_github_content":      "Fetching the latest configuration from GitHub...",
 		"update_deployment_files":   "Updating deployment configuration files...",
@@ -1138,11 +1137,11 @@ func getToolContextualMessage(toolName string) string {
 		"rollback_changes":          "Rolling back to the previous configuration...",
 		"verify_upgrade_success":    "Verifying the upgrade completed successfully...",
 	}
-	
+
 	if message, exists := contextMessages[toolName]; exists {
 		return message
 	}
-	
+
 	// Fallback: create a contextual message from the tool name
 	friendlyName := strings.ReplaceAll(toolName, "_", " ")
 	return fmt.Sprintf("Working on %s...", friendlyName)
@@ -1152,7 +1151,7 @@ func getToolCompletionMessage(toolName string, success bool) string {
 	if success {
 		successMessages := map[string]string{
 			"upgrade_blockchain_client": "Node upgrade completed successfully",
-			"create_pull_request":       "Pull request created successfully", 
+			"create_pull_request":       "Pull request created successfully",
 			"update_network_images":     "Container images updated across the network",
 			"fetch_github_content":      "Configuration fetched from GitHub",
 			"update_deployment_files":   "Deployment configuration updated",
@@ -1162,18 +1161,18 @@ func getToolCompletionMessage(toolName string, success bool) string {
 			"rollback_changes":          "Successfully rolled back to previous configuration",
 			"verify_upgrade_success":    "Upgrade verification completed successfully",
 		}
-		
+
 		if message, exists := successMessages[toolName]; exists {
 			return message
 		}
-		
+
 		// Fallback
 		friendlyName := strings.ReplaceAll(toolName, "_", " ")
 		return fmt.Sprintf("%s completed successfully", strings.Title(friendlyName))
 	} else {
 		failureMessages := map[string]string{
 			"upgrade_blockchain_client": "Node upgrade failed - please check the logs",
-			"create_pull_request":       "Failed to create pull request", 
+			"create_pull_request":       "Failed to create pull request",
 			"update_network_images":     "Failed to update container images",
 			"fetch_github_content":      "Failed to fetch configuration from GitHub",
 			"update_deployment_files":   "Failed to update deployment configuration",
@@ -1183,11 +1182,11 @@ func getToolCompletionMessage(toolName string, success bool) string {
 			"rollback_changes":          "Failed to rollback changes",
 			"verify_upgrade_success":    "Upgrade verification failed",
 		}
-		
+
 		if message, exists := failureMessages[toolName]; exists {
 			return message
 		}
-		
+
 		// Fallback
 		friendlyName := strings.ReplaceAll(toolName, "_", " ")
 		return fmt.Sprintf("%s failed", strings.Title(friendlyName))
@@ -1201,17 +1200,17 @@ func wrapText(text string, width int) string {
 
 	var result strings.Builder
 	lines := strings.Split(text, "\n")
-	
+
 	for i, line := range lines {
 		if i > 0 {
 			result.WriteString("\n")
 		}
-		
+
 		if len(line) <= width {
 			result.WriteString(line)
 			continue
 		}
-		
+
 		words := strings.Fields(line)
 		if len(words) == 0 {
 			result.WriteString(line)

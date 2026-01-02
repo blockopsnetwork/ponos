@@ -62,12 +62,12 @@ func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, 
 		fmt.Println("agent_core_url is not configured in ponos.yml")
 		os.Exit(1)
 	}
-	
+
 	var mcpClient *GitHubMCPClient
 	if enableMCP {
 		mcpClient = BuildGitHubMCPClient(cfg, logger)
 	}
-	
+
 	bot := &Bot{
 		client:       slackClient,
 		config:       cfg,
@@ -78,11 +78,11 @@ func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, 
 			Timeout: 300 * time.Second,
 		},
 	}
-	
+
 	if enableMCP {
 		bot.githubHandler = NewGitHubDeployHandler(logger, cfg, slackClient, bot, mcpClient)
 	}
-	
+
 	return bot
 }
 
@@ -580,7 +580,7 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 		case "tool_start":
 			if update.Tool != "" {
 				toolExecutionCount[update.Tool]++
-				
+
 				if toolExecutionCount[update.Tool] == 1 {
 					status := fmt.Sprintf(":gear: Running *%s*…", formatToolName(update.Tool))
 					b.postThreadedSlackMessage(channel, threadTS, status)
@@ -594,7 +594,7 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 			if summary == "" {
 				summary = update.Message
 			}
-			if summary != "" && len(summary) < 500 { 
+			if summary != "" && len(summary) < 500 {
 				icon := ":white_check_mark:"
 				if !update.Success {
 					icon = ":x:"
@@ -689,7 +689,6 @@ func formatToolName(name string) string {
 	}
 	return strings.ReplaceAll(name, "_", " ")
 }
-
 
 func (b *Bot) ProcessReleaseUpdate(ctx context.Context, payload ReleasesWebhookPayload) (*AgentSummary, error) {
 	request := map[string]any{
@@ -957,7 +956,7 @@ func (b *Bot) processStreamingResponse(body io.Reader, updates chan<- StreamingU
 
 func (b *Bot) extractAndUnmarshalJSON(input string, target any) error {
 	input = strings.TrimSpace(input)
-	
+
 	// Handle markdown code blocks
 	if strings.HasPrefix(input, "```") {
 		lines := strings.Split(input, "\n")
