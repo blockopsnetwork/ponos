@@ -19,3 +19,4 @@ tmp/
 # Any local environment files
 .env*
 *.env
+*.pem

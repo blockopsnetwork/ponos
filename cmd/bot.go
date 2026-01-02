@@ -58,9 +58,8 @@ type Bot struct {
 }
 
 func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, enableMCP bool) *Bot {
-	agentCoreURL := os.Getenv("AGENT_CORE_URL")
-	if agentCoreURL == "" {
-		fmt.Println("AGENT_CORE_URL is not configured")
+	if cfg.AgentCoreURL == "" {
+		fmt.Println("agent_core_url is not configured in ponos.yml")
 		os.Exit(1)
 	}
 	
@@ -74,7 +73,7 @@ func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, 
 		config:       cfg,
 		logger:       logger,
 		mcpClient:    mcpClient,
-		agentCoreURL: agentCoreURL,
+		agentCoreURL: cfg.AgentCoreURL,
 		httpClient: &http.Client{
 			Timeout: 300 * time.Second,
 		},

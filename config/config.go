@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/kelseyhightower/envconfig"
 	"gopkg.in/yaml.v3"
 )
 
@@ -46,19 +45,20 @@ type Project struct {
 }
 
 func Load() (*Config, error) {
-	var cfg Config
-	
-	if _, err := os.Stat("ponos.yml"); err == nil {
-		data, err := os.ReadFile("ponos.yml")
-		if err == nil {
-			yaml.Unmarshal(data, &cfg)
-		}
+	if _, err := os.Stat("ponos.yml"); err != nil {
+		return nil, fmt.Errorf("Ponos config (ponos.yml) missing, ensure you add the ponos.yml in the root directory")
 	}
 	
-	err := envconfig.Process("", &cfg)
+	data, err := os.ReadFile("ponos.yml")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read ponos.yml: %w", err)
 	}
+	
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("invalid ponos.yml format: %w", err)
+	}
+	
 	cfg.Sanitize()
 	return &cfg, nil
 }
