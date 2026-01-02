@@ -693,21 +693,12 @@ func formatToolName(name string) string {
 
 
 func (b *Bot) ProcessReleaseUpdate(ctx context.Context, payload ReleasesWebhookPayload) (*AgentSummary, error) {
-	configPath := os.Getenv("CONFIG_YAML_PATH")
-	if configPath == "" {
-		configPath = "repo-config.yaml"
-	}
-	repoConfig, err := config.LoadProjectConfig(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load repo config: %w", err)
-	}
-
 	request := map[string]any{
 		"repositories": payload.Repositories,
 		"releases":     payload.Releases,
 		"event_type":   payload.EventType,
 		"username":     payload.Username,
-		"repo_config":  repoConfig,
+		"repo_config":  &config.ProjectConfig{Projects: b.config.Projects},
 	}
 
 	requestBody, err := json.Marshal(request)
@@ -810,14 +801,6 @@ If no blockchain containers found, return: []`, yamlContent)
 }
 
 func (b *Bot) StreamConversation(ctx context.Context, userMessage string, conversationHistory []map[string]string, updates chan<- StreamingUpdate) error {
-	configPath := os.Getenv("CONFIG_YAML_PATH")
-	if configPath == "" {
-		configPath = "repo-config.yaml"
-	}
-	repoConfig, err := config.LoadProjectConfig(configPath)
-	if err != nil {
-		return fmt.Errorf("failed to load repo config: %w", err)
-	}
 
 	request := map[string]any{
 		"message": userMessage,
@@ -832,7 +815,7 @@ func (b *Bot) StreamConversation(ctx context.Context, userMessage string, conver
 				"blockchain_analysis",
 			},
 		},
-		"repo_config": repoConfig,
+		"repo_config": &config.ProjectConfig{Projects: b.config.Projects},
 	}
 
 	if len(conversationHistory) > 0 {
