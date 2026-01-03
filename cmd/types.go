@@ -190,3 +190,65 @@ type AgentClient interface {
 type SlackClient interface {
 	PostMessage(channelID string, options ...slack.MsgOption) (string, string, error)
 }
+
+type ReleasesWebhookPayload struct {
+	EventType    string                 `json:"event_type"`
+	Username     string                 `json:"username"`
+	Timestamp    string                 `json:"timestamp"`
+	Repositories []Repository           `json:"repositories"`
+	Releases     map[string]ReleaseInfo `json:"releases"`
+}
+
+type Repository struct {
+	Owner       string `json:"owner"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	NetworkKey  string `json:"network_key"`
+	NetworkName string `json:"network_name"`
+	ReleaseTag  string `json:"release_tag"`
+	DockerTag   string `json:"docker_tag"`
+	ClientType  string `json:"client_type"`
+}
+
+type ReleaseInfo struct {
+	TagName     string `json:"tag_name"`
+	Name        string `json:"name"`
+	Body        string `json:"body"`
+	HTMLURL     string `json:"html_url"`
+	PublishedAt string `json:"published_at"`
+	Prerelease  bool   `json:"prerelease"`
+	Draft       bool   `json:"draft"`
+}
+
+type DiagnosticsResponse struct {
+	Success bool              `json:"success"`
+	Result  DiagnosticsResult `json:"result"`
+	Error   string            `json:"error,omitempty"`
+}
+
+type DiagnosticsResult struct {
+	Service             string                 `json:"service"`
+	Namespace           string                 `json:"namespace"`
+	ResourceType        string                 `json:"resource_type"`
+	Prompt              string                 `json:"prompt"`
+	IssueURL            string                 `json:"issue_url"`
+	SlackResult         map[string]interface{} `json:"slack_result"`
+	Channel             string                 `json:"slack_channel"`
+	IssueNumber         int                    `json:"issue_number"`
+	LogSnippet          string                 `json:"log_snippet"`
+	Summary             string                 `json:"summary"`
+	ResourceDescription string                 `json:"resource_description"`
+	EventsSummary       string                 `json:"events_summary"`
+}
+
+type AuthenticatedTransport struct {
+	APIKey    string
+	Transport http.RoundTripper
+}
+
+func (t *AuthenticatedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.APIKey != "" {
+		req.Header.Set("X-API-Key", t.APIKey)
+	}
+	return t.Transport.RoundTrip(req)
+}

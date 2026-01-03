@@ -18,46 +18,6 @@ import (
 	"github.com/slack-go/slack/slackevents"
 )
 
-type ReleasesWebhookPayload struct {
-	EventType    string                 `json:"event_type"`
-	Username     string                 `json:"username"`
-	Timestamp    string                 `json:"timestamp"`
-	Repositories []Repository           `json:"repositories"`
-	Releases     map[string]ReleaseInfo `json:"releases"`
-}
-
-type Repository struct {
-	Owner       string `json:"owner"`
-	Name        string `json:"name"`
-	DisplayName string `json:"display_name"`
-	NetworkKey  string `json:"network_key"`
-	NetworkName string `json:"network_name"`
-	ReleaseTag  string `json:"release_tag"`
-	DockerTag   string `json:"docker_tag"`
-	ClientType  string `json:"client_type"`
-}
-
-type ReleaseInfo struct {
-	TagName     string `json:"tag_name"`
-	Name        string `json:"name"`
-	Body        string `json:"body"`
-	HTMLURL     string `json:"html_url"`
-	PublishedAt string `json:"published_at"`
-	Prerelease  bool   `json:"prerelease"`
-	Draft       bool   `json:"draft"`
-}
-
-type AuthenticatedTransport struct {
-	APIKey    string
-	Transport http.RoundTripper
-}
-
-func (t *AuthenticatedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t.APIKey != "" {
-		req.Header.Set("X-API-Key", t.APIKey)
-	}
-	return t.Transport.RoundTrip(req)
-}
 
 type Bot struct {
 	client        *slack.Client
@@ -104,29 +64,19 @@ func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, 
 		bot.githubHandler = NewGitHubDeployHandler(logger, cfg, slackClient, bot, mcpClient)
 	}
 
+	if cfg.AgentCoreAPIKey != "" {
+		go func() {
+			if err := bot.syncConfigToAgentCore(); err != nil {
+				logger.Error("Failed to sync configuration to agent-core", "error", err)
+			} else {
+				logger.Info("Configuration synced to agent-core successfully")
+			}
+		}()
+	}
+
 	return bot
 }
 
-type DiagnosticsResponse struct {
-	Success bool              `json:"success"`
-	Result  DiagnosticsResult `json:"result"`
-	Error   string            `json:"error,omitempty"`
-}
-
-type DiagnosticsResult struct {
-	Service             string                 `json:"service"`
-	Namespace           string                 `json:"namespace"`
-	ResourceType        string                 `json:"resource_type"`
-	Prompt              string                 `json:"prompt"`
-	IssueURL            string                 `json:"issue_url"`
-	SlackResult         map[string]interface{} `json:"slack_result"`
-	Channel             string                 `json:"slack_channel"`
-	IssueNumber         int                    `json:"issue_number"`
-	LogSnippet          string                 `json:"log_snippet"`
-	Summary             string                 `json:"summary"`
-	ResourceDescription string                 `json:"resource_description"`
-	EventsSummary       string                 `json:"events_summary"`
-}
 
 func (b *Bot) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(b.config.SlackSigningKey) == "" {
@@ -135,30 +85,8 @@ func (b *Bot) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sv, err := slack.NewSecretsVerifier(r.Header, b.config.SlackSigningKey)
-	if err != nil {
-		b.logger.Error("failed to create secrets verifier", "error", err)
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		b.logger.Error("failed to read request body", "error", err)
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	_, err = sv.Write(body)
-	if err != nil {
-		b.logger.Error("failed to write body to verifier", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	if err := sv.Ensure(); err != nil {
-		b.logger.Error("failed to verify request signature", "error", err)
-		w.WriteHeader(http.StatusUnauthorized)
+	body, ok := b.verifySlack(w, r, 1<<20)
+	if !ok {
 		return
 	}
 
@@ -201,7 +129,8 @@ func (b *Bot) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 
 	default:
-		w.WriteHeader(http.StatusInternalServerError)
+		b.logger.Info("Unknown Slack event type, ignoring", "type", eventsAPIEvent.Type)
+		w.WriteHeader(http.StatusOK)
 	}
 }
 
@@ -240,33 +169,12 @@ func (b *Bot) handleSlashCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		b.logger.Error("failed to read request body", "error", err)
-		w.WriteHeader(http.StatusBadRequest)
+	bodyBytes, ok := b.verifySlack(w, r, 1<<20)
+	if !ok {
 		return
 	}
 
 	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
-	sv, err := slack.NewSecretsVerifier(r.Header, b.config.SlackSigningKey)
-	if err != nil {
-		b.logger.Error("failed to create secrets verifier for slash command", "error", err)
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	if _, err := sv.Write(bodyBytes); err != nil {
-		b.logger.Error("failed to write body to verifier for slash command", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	if err := sv.Ensure(); err != nil {
-		b.logger.Error("failed to verify slash command request signature", "error", err)
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
 
 	if err := r.ParseForm(); err != nil {
 		b.logger.Error("failed to parse slash command form", "error", err)
@@ -325,6 +233,8 @@ func (b *Bot) handleGitHubMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = io.NopCloser(io.LimitReader(r.Body, 1<<20))
+	
 	var mcpRequest MCPRequest
 	if err := json.NewDecoder(r.Body).Decode(&mcpRequest); err != nil {
 		b.logger.Error("failed to decode MCP request", "error", err)
@@ -477,7 +387,7 @@ func (b *Bot) triggerDiagnostics(service, channelID string) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := b.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("diagnostics request failed: %w", err)
 	}
@@ -514,16 +424,16 @@ func (b *Bot) slackDiagnosticMessageBlock(service string, result DiagnosticsResu
 	var fields []*slack.TextBlockObject
 
 	if result.Namespace != "" {
-		fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*Namespace:*\n`%s`", result.Namespace), false, false))
+		fields = append(fields, mdField("Namespace", "`"+result.Namespace+"`"))
 	}
 	if result.ResourceType != "" {
-		fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*Resource:*\n`%s`", result.ResourceType), false, false))
+		fields = append(fields, mdField("Resource", "`"+result.ResourceType+"`"))
 	}
 	if result.IssueURL != "" {
-		fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*GitHub issue:*\n<%s>", result.IssueURL), false, false))
+		fields = append(fields, mdField("GitHub issue", "<"+result.IssueURL+">"))
 	}
 	if result.EventsSummary != "" {
-		fields = append(fields, slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*Events:*\n%s", result.EventsSummary), false, false))
+		fields = append(fields, mdField("Events", result.EventsSummary))
 	}
 
 	blocks := []slack.Block{
@@ -537,27 +447,20 @@ func (b *Bot) slackDiagnosticMessageBlock(service string, result DiagnosticsResu
 	}
 
 	if result.Summary != "" {
-		blocks = append(blocks, slack.NewSectionBlock(
-			slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*Summary:*\n%s", result.Summary), false, false),
-			nil, nil))
+		blocks = append(blocks, slack.NewSectionBlock(mdField("Summary", result.Summary), nil, nil))
 	}
 
 	if result.LogSnippet != "" {
-		blocks = append(blocks, slack.NewSectionBlock(
-			slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*Log snapshot:*\n```\n%s\n```", result.LogSnippet), false, false),
-			nil, nil))
+		blocks = append(blocks, slack.NewSectionBlock(mdField("Log snapshot", "```\n"+result.LogSnippet+"\n```"), nil, nil))
 	}
 
 	if result.ResourceDescription != "" {
 		blocks = append(blocks, slack.NewSectionBlock(
-			slack.NewTextBlockObject(slack.MarkdownType, "*Resource description was added to the GitHub issue.*", false, false),
-			nil, nil))
+			slack.NewTextBlockObject(slack.MarkdownType, "*Resource description was added to the GitHub issue.*", false, false), nil, nil))
 	}
 
 	if result.Prompt != "" {
-		blocks = append(blocks, slack.NewSectionBlock(
-			slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*Prompt:*\n```\n%s\n```", result.Prompt), false, false),
-			nil, nil))
+		blocks = append(blocks, slack.NewSectionBlock(mdField("Prompt", "```\n"+result.Prompt+"\n```"), nil, nil))
 	}
 
 	return blocks
@@ -677,31 +580,14 @@ func (b *Bot) postThreadedSlackMessage(channel, threadTS, text string) {
 	if text == "" {
 		return
 	}
-
-	opts := []slack.MsgOption{slack.MsgOptionText(text, false)}
-	if threadTS != "" {
-		// Use thread timestamp to reply in thread
-		opts = append(opts, slack.MsgOptionTS(threadTS))
-	}
-
-	if _, timestamp, err := b.client.PostMessage(channel, opts...); err != nil {
-		b.logger.Error("failed to post Slack message", "error", err, "channel", channel, "thread_ts", threadTS)
-	} else {
-		b.logger.Debug("posted threaded message", "channel", channel, "thread_ts", threadTS, "new_ts", timestamp)
-	}
+	b.post(channel, threadTS, slack.MsgOptionText(text, false))
 }
 
 func (b *Bot) postThreadedSlackBlocks(channel, threadTS string, blocks []slack.Block) {
 	if len(blocks) == 0 {
 		return
 	}
-	opts := []slack.MsgOption{slack.MsgOptionBlocks(blocks...)}
-	if threadTS != "" {
-		opts = append(opts, slack.MsgOptionTS(threadTS))
-	}
-	if _, _, err := b.client.PostMessage(channel, opts...); err != nil {
-		b.logger.Error("failed to post Slack blocks", "error", err, "channel", channel)
-	}
+	b.post(channel, threadTS, slack.MsgOptionBlocks(blocks...))
 }
 
 func formatToolName(name string) string {
@@ -711,34 +597,19 @@ func formatToolName(name string) string {
 	return strings.ReplaceAll(name, "_", " ")
 }
 
-func (b *Bot) ProcessReleaseUpdate(ctx context.Context, payload ReleasesWebhookPayload) (*AgentSummary, error) {
-	request := map[string]any{
-		"repositories": payload.Repositories,
-		"releases":     payload.Releases,
-		"event_type":   payload.EventType,
-		"username":     payload.Username,
-		"ponos_config": map[string]any{
-			"github_app_id":      b.config.GitHubAppID,
-			"github_install_id":  b.config.GitHubInstallID,
-			"github_pem_key":     b.config.GitHubPEMKey,
-			"github_bot_name":    b.config.GitHubBotName,
-			"slack_token":        b.config.SlackToken,
-			"slack_signing_key":  b.config.SlackSigningKey,
-			"slack_verify_token": b.config.SlackVerifyTok,
-			"slack_channel":      b.config.SlackChannel,
-			"projects":           b.config.Projects,
-		},
+func (b *Bot) doJSON(ctx context.Context, method, url string, in any, out any) error {
+	var buf io.Reader
+	if in != nil {
+		raw, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		buf = bytes.NewReader(raw)
 	}
 
-	requestBody, err := json.Marshal(request)
+	req, err := http.NewRequestWithContext(ctx, method, url, buf)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	url := fmt.Sprintf("%s/blockchain/analyze-release", b.agentCoreURL)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(requestBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -746,25 +617,179 @@ func (b *Bot) ProcessReleaseUpdate(ctx context.Context, payload ReleasesWebhookP
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("HTTP request to agent-core failed: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("agent-core returned error status %d: %s", resp.StatusCode, string(body))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	var analysisResult AgentSummary
-	if err := json.NewDecoder(resp.Body).Decode(&analysisResult); err != nil {
-		return nil, fmt.Errorf("failed to decode agent-core response: %w", err)
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out)
+}
+
+func (b *Bot) verifySlack(w http.ResponseWriter, r *http.Request, max int64) ([]byte, bool) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, max))
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return nil, false
 	}
 
-	if !analysisResult.Success {
-		return nil, fmt.Errorf("agent-core analysis failed: %s", analysisResult.Error)
+	sv, err := slack.NewSecretsVerifier(r.Header, b.config.SlackSigningKey)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return nil, false
 	}
 
-	return &analysisResult, nil
+	if _, err := sv.Write(body); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return nil, false
+	}
+	if err := sv.Ensure(); err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		return nil, false
+	}
+
+	return body, true
+}
+
+func mdField(title, val string) *slack.TextBlockObject {
+	return slack.NewTextBlockObject(slack.MarkdownType, fmt.Sprintf("*%s:*\n%s", title, val), false, false)
+}
+
+func (b *Bot) post(channel, threadTS string, opts ...slack.MsgOption) {
+	if threadTS != "" {
+		opts = append(opts, slack.MsgOptionTS(threadTS))
+	}
+	_, _, _ = b.client.PostMessage(channel, opts...)
+}
+
+func (b *Bot) syncConfigToAgentCore() error {
+	const maxDuration = 60 * time.Second
+	
+	startTime := time.Now()
+	attempt := 0
+	var lastErr error
+	
+	for time.Since(startTime) < maxDuration {
+		attempt++
+		
+		remainingTime := maxDuration - time.Since(startTime)
+		ctxTimeout := 10 * time.Second
+		if remainingTime < ctxTimeout {
+			ctxTimeout = remainingTime
+		}
+		
+		ctx, cancel := context.WithTimeout(context.Background(), ctxTimeout)
+		err := b.trySyncConfig(ctx)
+		cancel()
+		
+		if err == nil {
+			b.logger.Info("Config sync successful", "attempt", attempt)
+			return nil
+		}
+		
+		lastErr = err
+		
+		if time.Since(startTime) >= maxDuration {
+			break
+		}
+		
+		backoff := time.Duration(attempt) * time.Second
+		if backoff > 10*time.Second {
+			backoff = 10 * time.Second
+		}
+		if time.Since(startTime)+backoff >= maxDuration {
+			break
+		}
+		
+		b.logger.Warn("Config sync failed, retrying", 
+			"attempt", attempt, 
+			"error", err.Error(), 
+			"backoff", backoff)
+		
+		time.Sleep(backoff)
+	}
+	
+	if lastErr != nil {
+		return fmt.Errorf("sync failed after %v and %d attempts: %w", maxDuration, attempt, lastErr)
+	}
+	return fmt.Errorf("sync failed after %v and %d attempts", maxDuration, attempt)
+}
+
+func (b *Bot) trySyncConfig(ctx context.Context) error {
+	githubPayload := map[string]any{
+		"service_type": "github",
+		"credentials": map[string]any{
+			"app_id":     b.config.GitHubAppID,
+			"install_id": b.config.GitHubInstallID,
+			"pem_key":    b.config.GitHubPEMKey,
+			"bot_name":   b.config.GitHubBotName,
+		},
+	}
+
+	if err := b.sendCredentials(ctx, githubPayload); err != nil {
+		return fmt.Errorf("GitHub credentials: %w", err)
+	}
+
+	slackPayload := map[string]any{
+		"service_type": "slack",
+		"credentials": map[string]any{
+			"token":        b.config.SlackToken,
+			"signing_key":  b.config.SlackSigningKey,
+			"verify_token": b.config.SlackVerifyTok,
+			"channel":      b.config.SlackChannel,
+		},
+	}
+
+	if err := b.sendCredentials(ctx, slackPayload); err != nil {
+		return fmt.Errorf("Slack credentials: %w", err)
+	}
+
+	projectsPayload := map[string]any{
+		"projects": b.config.Projects,
+	}
+
+	if err := b.sendProjects(ctx, projectsPayload); err != nil {
+		return fmt.Errorf("projects: %w", err)
+	}
+
+	return nil
+}
+
+func (b *Bot) sendCredentials(ctx context.Context, payload map[string]any) error {
+	url := fmt.Sprintf("%s/api/v1/users/credentials", b.agentCoreURL)
+	return b.doJSON(ctx, "POST", url, payload, nil)
+}
+
+func (b *Bot) sendProjects(ctx context.Context, payload map[string]any) error {
+	url := fmt.Sprintf("%s/api/v1/users/projects", b.agentCoreURL)
+	return b.doJSON(ctx, "POST", url, payload, nil)
+}
+
+func (b *Bot) ProcessReleaseUpdate(ctx context.Context, payload ReleasesWebhookPayload) (*AgentSummary, error) {
+	request := map[string]any{
+		"repositories": payload.Repositories,
+		"releases":     payload.Releases,
+		"event_type":   payload.EventType,
+		"username":     payload.Username,
+	}
+
+	url := fmt.Sprintf("%s/blockchain/analyze-release", b.agentCoreURL)
+	var result AgentSummary
+	if err := b.doJSON(ctx, "POST", url, request, &result); err != nil {
+		return nil, fmt.Errorf("agent-core request failed: %w", err)
+	}
+
+	if !result.Success {
+		return nil, fmt.Errorf("agent-core analysis failed: %s", result.Error)
+	}
+
+	return &result, nil
 }
 
 func (b *Bot) ExtractImages(ctx context.Context, yamlContent string) ([]string, error) {
@@ -785,34 +810,10 @@ If no blockchain containers found, return: []`, yamlContent)
 		},
 	}
 
-	requestBody, err := json.Marshal(request)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
 	url := fmt.Sprintf("%s/agent/simple", b.agentCoreURL)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(requestBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := b.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request to agent-core failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("agent-core returned error status %d: %s", resp.StatusCode, string(body))
-	}
-
 	var response map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return nil, fmt.Errorf("failed to decode agent-core response: %w", err)
+	if err := b.doJSON(ctx, "POST", url, request, &response); err != nil {
+		return nil, fmt.Errorf("agent-core request failed: %w", err)
 	}
 
 	content, ok := response["content"].(string)
@@ -844,17 +845,6 @@ func (b *Bot) StreamConversation(ctx context.Context, userMessage string, conver
 				"blockchain_analysis",
 			},
 		},
-		"ponos_config": map[string]any{
-			"github_app_id":      b.config.GitHubAppID,
-			"github_install_id":  b.config.GitHubInstallID,
-			"github_pem_key":     b.config.GitHubPEMKey,
-			"github_bot_name":    b.config.GitHubBotName,
-			"slack_token":        b.config.SlackToken,
-			"slack_signing_key":  b.config.SlackSigningKey,
-			"slack_verify_token": b.config.SlackVerifyTok,
-			"slack_channel":      b.config.SlackChannel,
-			"projects":           b.config.Projects,
-		},
 	}
 
 	if len(conversationHistory) > 0 {
@@ -884,7 +874,7 @@ func (b *Bot) StreamConversation(ctx context.Context, userMessage string, conver
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -893,6 +883,7 @@ func (b *Bot) StreamConversation(ctx context.Context, userMessage string, conver
 
 func (b *Bot) processStreamingResponse(body io.Reader, updates chan<- StreamingUpdate) error {
 	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var assistantMessageID string
 
 	for scanner.Scan() {
