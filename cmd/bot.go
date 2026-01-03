@@ -47,6 +47,18 @@ type ReleaseInfo struct {
 	Draft       bool   `json:"draft"`
 }
 
+type AuthenticatedTransport struct {
+	APIKey    string
+	Transport http.RoundTripper
+}
+
+func (t *AuthenticatedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.APIKey != "" {
+		req.Header.Set("X-API-Key", t.APIKey)
+	}
+	return t.Transport.RoundTrip(req)
+}
+
 type Bot struct {
 	client        *slack.Client
 	config        *config.Config
@@ -68,15 +80,24 @@ func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, 
 		mcpClient = BuildGitHubMCPClient(cfg, logger)
 	}
 
+	httpClient := &http.Client{
+		Timeout: 300 * time.Second,
+	}
+	
+	if cfg.AgentCoreAPIKey != "" {
+		httpClient.Transport = &AuthenticatedTransport{
+			APIKey:    cfg.AgentCoreAPIKey,
+			Transport: http.DefaultTransport,
+		}
+	}
+
 	bot := &Bot{
 		client:       slackClient,
 		config:       cfg,
 		logger:       logger,
 		mcpClient:    mcpClient,
 		agentCoreURL: cfg.AgentCoreURL,
-		httpClient: &http.Client{
-			Timeout: 300 * time.Second,
-		},
+		httpClient:   httpClient,
 	}
 
 	if enableMCP {
@@ -696,7 +717,17 @@ func (b *Bot) ProcessReleaseUpdate(ctx context.Context, payload ReleasesWebhookP
 		"releases":     payload.Releases,
 		"event_type":   payload.EventType,
 		"username":     payload.Username,
-		"repo_config":  &config.ProjectConfig{Projects: b.config.Projects},
+		"ponos_config": map[string]any{
+			"github_app_id":      b.config.GitHubAppID,
+			"github_install_id":  b.config.GitHubInstallID,
+			"github_pem_key":     b.config.GitHubPEMKey,
+			"github_bot_name":    b.config.GitHubBotName,
+			"slack_token":        b.config.SlackToken,
+			"slack_signing_key":  b.config.SlackSigningKey,
+			"slack_verify_token": b.config.SlackVerifyTok,
+			"slack_channel":      b.config.SlackChannel,
+			"projects":           b.config.Projects,
+		},
 	}
 
 	requestBody, err := json.Marshal(request)
@@ -813,7 +844,17 @@ func (b *Bot) StreamConversation(ctx context.Context, userMessage string, conver
 				"blockchain_analysis",
 			},
 		},
-		"repo_config": &config.ProjectConfig{Projects: b.config.Projects},
+		"ponos_config": map[string]any{
+			"github_app_id":      b.config.GitHubAppID,
+			"github_install_id":  b.config.GitHubInstallID,
+			"github_pem_key":     b.config.GitHubPEMKey,
+			"github_bot_name":    b.config.GitHubBotName,
+			"slack_token":        b.config.SlackToken,
+			"slack_signing_key":  b.config.SlackSigningKey,
+			"slack_verify_token": b.config.SlackVerifyTok,
+			"slack_channel":      b.config.SlackChannel,
+			"projects":           b.config.Projects,
+		},
 	}
 
 	if len(conversationHistory) > 0 {

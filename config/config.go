@@ -21,7 +21,8 @@ type Config struct {
 	SlackVerifyTok  string `envconfig:"SLACK_VERIFICATION_TOKEN" default:"" yaml:"slack_verify_token"`
 	SlackChannel    string `envconfig:"SLACK_CHANNEL" default:"sre-tasks" yaml:"slack_channel"`
 
-	AgentCoreURL string `envconfig:"AGENT_CORE_URL" default:"http://api.nodeoperator.ai" yaml:"agent_core_url"`
+	AgentCoreURL string `envconfig:"AGENT_CORE_URL" default:"http://api.nodeoperator.ai" yaml:"api_endpoint"`
+	AgentCoreAPIKey string `envconfig:"API_KEY" default:"" yaml:"api_key"`
 
 	Port string `envconfig:"PORT" default:"8080" yaml:"port"`
 
