@@ -36,11 +36,17 @@ type AgentSummary struct {
 }
 
 type ConfigChangeInstruction struct {
-	Description string      `json:"description,omitempty"`
-	Action      string      `json:"action,omitempty"`
-	Path        string      `json:"path,omitempty"`
-	Value       interface{} `json:"value,omitempty"`
-	Match       interface{} `json:"match,omitempty"`
+	Description        string      `json:"description,omitempty"`
+	Action             string      `json:"action,omitempty"`
+	Path               string      `json:"path,omitempty"`
+	Value              interface{} `json:"value,omitempty"`
+	Match              interface{} `json:"match,omitempty"`
+	TestingPlan        string      `json:"testing_plan,omitempty"`
+	MigrationNotes     string      `json:"migration_notes,omitempty"`
+	RollbackPlan       string      `json:"rollback_plan,omitempty"`
+	SecurityImplications string    `json:"security_implications,omitempty"`
+	BreakingChanges    []string    `json:"breaking_changes,omitempty"`
+	DeploymentStrategy string      `json:"deployment_strategy,omitempty"`
 }
 
 type NetworkReleaseInfo struct {
