@@ -811,13 +811,13 @@ Example Prompts
 func (tui *PonosAgentTUI) getStatusText() string {
 	status := "Current Setup Status:\n\n"
 
-	if tui.bot.config.GitHubToken != "" {
+	if tui.bot.config.Integrations.GitHub.Token != "" {
 		status += "GitHub Token configured\n"
 	} else {
 		status += "GitHub Token missing\n"
 	}
 
-	if tui.bot.config.SlackToken != "" {
+	if tui.bot.config.Integrations.Slack.Token != "" {
 		status += "Slack Token configured\n"
 	} else {
 		status += "Slack Token missing\n"

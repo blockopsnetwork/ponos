@@ -65,19 +65,19 @@ func runAgentTUI() {
 		os.Exit(1)
 	}
 
-	if strings.TrimSpace(cfg.SlackToken) == "" || strings.TrimSpace(cfg.SlackSigningKey) == "" {
+	if strings.TrimSpace(cfg.Integrations.Slack.Token) == "" || strings.TrimSpace(cfg.Integrations.Slack.SigningKey) == "" {
 		fmt.Fprintf(os.Stderr, "Slack configuration missing: slack_token and slack_signing_key are required in ponos.yml\n")
-		logger.Error("Slack configuration missing", "has_token", cfg.SlackToken != "", "has_signing_key", cfg.SlackSigningKey != "")
+		logger.Error("Slack configuration missing", "has_token", cfg.Integrations.Slack.Token != "", "has_signing_key", cfg.Integrations.Slack.SigningKey != "")
 		os.Exit(1)
 	}
 
-	if strings.TrimSpace(cfg.AgentCoreURL) == "" {
-		fmt.Fprintf(os.Stderr, "agent_core_url is not configured in ponos.yml\n")
-		logger.Error("agent_core_url is not configured")
+	if strings.TrimSpace(cfg.APIEndpoint) == "" {
+		fmt.Fprintf(os.Stderr, "api_endpoint is not configured in ponos.yml\n")
+		logger.Error("api_endpoint is not configured")
 		os.Exit(1)
 	}
 
-	api := slack.New(cfg.SlackToken)
+	api := slack.New(cfg.Integrations.Slack.Token)
 	bot := NewBot(cfg, logger, api, false)
 	tui := NewPonosAgentTUI(bot, logger)
 	tui.Start()

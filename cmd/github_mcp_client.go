@@ -45,12 +45,12 @@ const (
 
 func BuildGitHubMCPClient(cfg *config.Config, logger *slog.Logger) *GitHubMCPClient {
 	return NewGitHubMCPClient(
-		cfg.GitHubMCPURL,
-		cfg.GitHubToken,
-		cfg.GitHubAppID,
-		cfg.GitHubInstallID,
-		cfg.GitHubPEMKey,
-		cfg.GitHubBotName,
+		cfg.Integrations.GitHub.MCPURL,
+		cfg.Integrations.GitHub.Token,
+		cfg.Integrations.GitHub.AppID,
+		cfg.Integrations.GitHub.InstallID,
+		cfg.Integrations.GitHub.PEMKey,
+		cfg.Integrations.GitHub.BotName,
 		logger,
 	)
 }
