@@ -103,7 +103,7 @@ release:
     
     ### Docker
     ```bash
-    docker pull blockopsnetwork/ponos-server:{{ .Tag }}
+    docker pull ghcr.io/blockopsnetwork/ponos-server:{{ .Tag }}
     ```
     
     ### Configuration
@@ -117,8 +117,8 @@ release:
 
 dockers:
   - image_templates:
-      - "blockopsnetwork/ponos-server:{{ .Tag }}"
-      - "blockopsnetwork/ponos-server:latest"
+      - "ghcr.io/blockopsnetwork/ponos-server:{{ .Tag }}"
+      - "ghcr.io/blockopsnetwork/ponos-server:latest"
     dockerfile: Dockerfile.goreleaser
     extra_files:
       - ponos.yml.example
