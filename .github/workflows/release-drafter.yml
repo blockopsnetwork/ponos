@@ -8,6 +8,10 @@ on:
 jobs:
   update_release_draft:
     runs-on: ubuntu-latest
+    if: github.repository == 'blockopsnetwork/ponos' && github.actor != 'dependabot[bot]'
+    permissions:
+      contents: write
+      pull-requests: read
     steps:
       - uses: release-drafter/release-drafter@v5
         env:

@@ -7,7 +7,6 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
-	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/slack-go/slack v0.17.0
 	gopkg.in/yaml.v3 v3.0.1
 )

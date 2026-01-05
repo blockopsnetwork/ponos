@@ -15,6 +15,9 @@ jobs:
   build:
     name: Build Docker Image
     runs-on: ubuntu-latest
+    if: github.repository == 'blockopsnetwork/ponos' && github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -29,6 +32,10 @@ jobs:
     name: Push Docker Image
     runs-on: ubuntu-latest
     needs: build
+    if: github.repository == 'blockopsnetwork/ponos' && github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Push Docker Image
         run: make docker-pushx CONTAINER_REGISTRY=${CONTAINER_REGISTRY} IMAGE_TAG=${{ inputs.tag }}
