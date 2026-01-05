@@ -43,7 +43,7 @@ archives:
       - LICENSE*
       - CHANGELOG.md
       - docs/*
-      - repo-config.yaml.example
+      - ponos.yml.example
 
 checksum:
   name_template: 'checksums.txt'
@@ -121,7 +121,7 @@ dockers:
       - "blockopsnetwork/ponos-server:latest"
     dockerfile: Dockerfile.goreleaser
     extra_files:
-      - repo-config.yaml.example
+      - ponos.yml.example
 
 brews:
   - name: ponos
@@ -158,8 +158,8 @@ nfpms:
       - rpm
     bindir: /usr/bin
     contents:
-      - src: ./repo-config.yaml.example
-        dst: /etc/ponos/repo-config.yaml
+      - src: ./ponos.yml.example
+        dst: /etc/ponos/ponos.yml
         type: "config|noreplace"
         file_info:
           mode: 0644
