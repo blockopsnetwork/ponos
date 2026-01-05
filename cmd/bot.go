@@ -30,8 +30,8 @@ type Bot struct {
 }
 
 func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, enableMCP bool) *Bot {
-	if cfg.AgentCoreURL == "" {
-		fmt.Println("agent_core_url is not configured in ponos.yml")
+	if cfg.APIEndpoint == "" {
+		fmt.Println("api_endpoint is not configured in ponos.yml")
 		os.Exit(1)
 	}
 
@@ -44,9 +44,9 @@ func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, 
 		Timeout: 300 * time.Second,
 	}
 	
-	if cfg.AgentCoreAPIKey != "" {
+	if cfg.APIKey != "" {
 		httpClient.Transport = &AuthenticatedTransport{
-			APIKey:    cfg.AgentCoreAPIKey,
+			APIKey:    cfg.APIKey,
 			Transport: http.DefaultTransport,
 		}
 	}
@@ -56,7 +56,7 @@ func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, 
 		config:       cfg,
 		logger:       logger,
 		mcpClient:    mcpClient,
-		agentCoreURL: cfg.AgentCoreURL,
+		agentCoreURL: cfg.APIEndpoint,
 		httpClient:   httpClient,
 	}
 
@@ -64,7 +64,7 @@ func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, 
 		bot.githubHandler = NewGitHubDeployHandler(logger, cfg, slackClient, bot, mcpClient)
 	}
 
-	if cfg.AgentCoreAPIKey != "" {
+	if cfg.APIKey != "" {
 		go func() {
 			if err := bot.syncConfigToAgentCore(); err != nil {
 				logger.Error("Failed to sync configuration to agent-core", "error", err)
@@ -79,7 +79,7 @@ func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, 
 
 
 func (b *Bot) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
-	if strings.TrimSpace(b.config.SlackSigningKey) == "" {
+	if strings.TrimSpace(b.config.Integrations.Slack.SigningKey) == "" {
 		b.logger.Error("Slack signing secret is not configured")
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -91,7 +91,7 @@ func (b *Bot) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var parseOpts []slackevents.Option
-	if token := strings.TrimSpace(b.config.SlackVerifyTok); token != "" {
+	if token := strings.TrimSpace(b.config.Integrations.Slack.VerifyToken); token != "" {
 		parseOpts = append(parseOpts, slackevents.OptionVerifyToken(&slackevents.TokenComparator{
 			VerificationToken: token,
 		}))
@@ -343,7 +343,7 @@ func (b *Bot) handleDiagnosticsCommand(text, userID, channelID string) *SlashCom
 		}
 	}
 
-	if b.config.AgentCoreURL == "" {
+	if b.config.APIEndpoint == "" {
 		b.logger.Error("Agent-core URL is not configured")
 		return &SlashCommandResponse{
 			ResponseType: "ephemeral",
@@ -379,7 +379,7 @@ func (b *Bot) triggerDiagnostics(service, channelID string) error {
 		return fmt.Errorf("failed to marshal diagnostics payload: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/diagnostics/run", b.config.AgentCoreURL)
+	url := fmt.Sprintf("%s/diagnostics/run", b.config.APIEndpoint)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create diagnostics request: %w", err)
@@ -639,7 +639,7 @@ func (b *Bot) verifySlack(w http.ResponseWriter, r *http.Request, max int64) ([]
 		return nil, false
 	}
 
-	sv, err := slack.NewSecretsVerifier(r.Header, b.config.SlackSigningKey)
+	sv, err := slack.NewSecretsVerifier(r.Header, b.config.Integrations.Slack.SigningKey)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return nil, false
@@ -722,43 +722,50 @@ func (b *Bot) syncConfigToAgentCore() error {
 }
 
 func (b *Bot) trySyncConfig(ctx context.Context) error {
-	githubPayload := map[string]any{
-		"service_type": "github",
-		"credentials": map[string]any{
-			"app_id":     b.config.GitHubAppID,
-			"install_id": b.config.GitHubInstallID,
-			"pem_key":    b.config.GitHubPEMKey,
-			"bot_name":   b.config.GitHubBotName,
+	ponosConfigPayload := map[string]any{
+		"integrations": map[string]any{
+			"github": map[string]any{
+				"app_id":     b.config.Integrations.GitHub.AppID,
+				"install_id": b.config.Integrations.GitHub.InstallID,
+				"pem_key":    b.config.Integrations.GitHub.PEMKey,
+				"bot_name":   b.config.Integrations.GitHub.BotName,
+			},
+			"slack": map[string]any{
+				"token":        b.config.Integrations.Slack.Token,
+				"signing_key":  b.config.Integrations.Slack.SigningKey,
+				"verify_token": b.config.Integrations.Slack.VerifyToken,
+				"channel":      b.config.Integrations.Slack.Channel,
+			},
 		},
-	}
-
-	if err := b.sendCredentials(ctx, githubPayload); err != nil {
-		return fmt.Errorf("GitHub credentials: %w", err)
-	}
-
-	slackPayload := map[string]any{
-		"service_type": "slack",
-		"credentials": map[string]any{
-			"token":        b.config.SlackToken,
-			"signing_key":  b.config.SlackSigningKey,
-			"verify_token": b.config.SlackVerifyTok,
-			"channel":      b.config.SlackChannel,
-		},
-	}
-
-	if err := b.sendCredentials(ctx, slackPayload); err != nil {
-		return fmt.Errorf("Slack credentials: %w", err)
-	}
-
-	projectsPayload := map[string]any{
 		"projects": b.config.Projects,
 	}
 
-	if err := b.sendProjects(ctx, projectsPayload); err != nil {
-		return fmt.Errorf("projects: %w", err)
+	if b.config.Diagnostics.Enabled {
+		ponosConfigPayload["diagnostics"] = map[string]any{
+			"enabled": true,
+			"github": map[string]any{
+				"owner": b.config.Diagnostics.GitHub.Owner,
+				"repo":  b.config.Diagnostics.GitHub.Repo,
+			},
+			"kubernetes": map[string]any{
+				"namespace":     b.config.Diagnostics.Kubernetes.Namespace,
+				"resource_type": b.config.Diagnostics.Kubernetes.ResourceType,
+			},
+			"monitoring": map[string]any{
+				"service":       b.config.Diagnostics.Monitoring.Service,
+				"log_tail":      b.config.Diagnostics.Monitoring.LogTail,
+				"eval_interval": b.config.Diagnostics.Monitoring.EvalInterval,
+			},
+		}
 	}
 
-	return nil
+	requestData := map[string]any{
+		"message":      "Configuration sync",
+		"ponos_config": ponosConfigPayload,
+	}
+
+	url := fmt.Sprintf("%s/agent/stream", b.agentCoreURL)
+	return b.doJSON(ctx, "POST", url, requestData, nil)
 }
 
 func (b *Bot) sendCredentials(ctx context.Context, payload map[string]any) error {

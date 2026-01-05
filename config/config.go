@@ -9,26 +9,61 @@ import (
 )
 
 type Config struct {
-	GitHubToken     string `envconfig:"GITHUB_TOKEN" default:"" yaml:"github_token"`
-	GitHubAppID     string `envconfig:"GITHUB_APP_ID" default:"" yaml:"github_app_id"`
-	GitHubInstallID string `envconfig:"GITHUB_INSTALL_ID" default:"" yaml:"github_install_id"`
-	GitHubPEMKey    string `envconfig:"GITHUB_PEM_KEY" default:"" yaml:"github_pem_key"`
-	GitHubBotName   string `envconfig:"GITHUB_BOT_NAME" default:"ponos-bot" yaml:"github_bot_name"`
-	GitHubMCPURL    string `envconfig:"GITHUB_MCP_URL" default:"http://github-mcp.nodeoperator.ai" yaml:"github_mcp_url"`
+	APIEndpoint  string             `envconfig:"AGENT_CORE_URL" default:"http://api.nodeoperator.ai" yaml:"api_endpoint"`
+	APIKey       string             `envconfig:"API_KEY" default:"" yaml:"api_key"`
+	Integrations IntegrationsConfig `yaml:"integrations"`
+	Diagnostics  DiagnosticsConfig  `yaml:"diagnostics"`
+	Server       ServerConfig       `yaml:"server"`
+	Projects     []Project          `yaml:"projects"`
+}
 
-	SlackToken      string `envconfig:"SLACK_TOKEN" default:"" yaml:"slack_token"`
-	SlackSigningKey string `envconfig:"SLACK_SIGNING_SECRET" default:"" yaml:"slack_signing_key"`
-	SlackVerifyTok  string `envconfig:"SLACK_VERIFICATION_TOKEN" default:"" yaml:"slack_verify_token"`
-	SlackChannel    string `envconfig:"SLACK_CHANNEL" default:"sre-tasks" yaml:"slack_channel"`
+type IntegrationsConfig struct {
+	GitHub GitHubConfig `yaml:"github"`
+	Slack  SlackConfig  `yaml:"slack"`
+}
 
-	AgentCoreURL string `envconfig:"AGENT_CORE_URL" default:"http://api.nodeoperator.ai" yaml:"api_endpoint"`
-	AgentCoreAPIKey string `envconfig:"API_KEY" default:"" yaml:"api_key"`
+type GitHubConfig struct {
+	Token     string `envconfig:"GITHUB_TOKEN" default:"" yaml:"token"`
+	AppID     string `envconfig:"GITHUB_APP_ID" default:"" yaml:"app_id"`
+	InstallID string `envconfig:"GITHUB_INSTALL_ID" default:"" yaml:"install_id"`
+	PEMKey    string `envconfig:"GITHUB_PEM_KEY" default:"" yaml:"pem_key"`
+	BotName   string `envconfig:"GITHUB_BOT_NAME" default:"ponos-bot" yaml:"bot_name"`
+	MCPURL    string `envconfig:"GITHUB_MCP_URL" default:"http://github-mcp.nodeoperator.ai" yaml:"mcp_url"`
+}
 
-	Port string `envconfig:"PORT" default:"8080" yaml:"port"`
+type SlackConfig struct {
+	Token       string `envconfig:"SLACK_TOKEN" default:"" yaml:"token"`
+	SigningKey  string `envconfig:"SLACK_SIGNING_SECRET" default:"" yaml:"signing_key"`
+	VerifyToken string `envconfig:"SLACK_VERIFICATION_TOKEN" default:"" yaml:"verify_token"`
+	Channel     string `envconfig:"SLACK_CHANNEL" default:"sre-tasks" yaml:"channel"`
+}
 
-	EnableReleaseListener bool `envconfig:"ENABLE_RELEASE_LISTENER" default:"false" yaml:"enable_release_listener"`
+type DiagnosticsConfig struct {
+	Enabled    bool                        `yaml:"enabled"`
+	GitHub     DiagnosticsGitHubConfig     `yaml:"github"`
+	Kubernetes DiagnosticsKubernetesConfig `yaml:"kubernetes"`
+	Monitoring DiagnosticsMonitoringConfig `yaml:"monitoring"`
+}
 
-	Projects []Project `yaml:"projects"`
+type DiagnosticsGitHubConfig struct {
+	Owner string `yaml:"owner"`
+	Repo  string `yaml:"repo"`
+}
+
+type DiagnosticsKubernetesConfig struct {
+	Namespace    string `yaml:"namespace"`
+	ResourceType string `yaml:"resource_type"`
+}
+
+type DiagnosticsMonitoringConfig struct {
+	Service      string `yaml:"service"`
+	LogTail      int    `yaml:"log_tail"`
+	EvalInterval int    `yaml:"eval_interval"`
+}
+
+type ServerConfig struct {
+	Port                  string `envconfig:"PORT" default:"8080" yaml:"port"`
+	EnableReleaseListener bool   `envconfig:"ENABLE_RELEASE_LISTENER" default:"false" yaml:"enable_release_listener"`
 }
 
 type ProjectConfig struct {
@@ -65,37 +100,39 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) Sanitize() {
-	c.GitHubToken = strings.TrimSpace(c.GitHubToken)
-	c.GitHubAppID = strings.TrimSpace(c.GitHubAppID)
-	c.GitHubInstallID = strings.TrimSpace(c.GitHubInstallID)
-	c.GitHubPEMKey = strings.TrimSpace(c.GitHubPEMKey)
-	c.GitHubBotName = strings.TrimSpace(c.GitHubBotName)
-	c.GitHubMCPURL = strings.TrimSpace(c.GitHubMCPURL)
+	c.Integrations.GitHub.Token = strings.TrimSpace(c.Integrations.GitHub.Token)
+	c.Integrations.GitHub.AppID = strings.TrimSpace(c.Integrations.GitHub.AppID)
+	c.Integrations.GitHub.InstallID = strings.TrimSpace(c.Integrations.GitHub.InstallID)
+	c.Integrations.GitHub.PEMKey = strings.TrimSpace(c.Integrations.GitHub.PEMKey)
+	c.Integrations.GitHub.BotName = strings.TrimSpace(c.Integrations.GitHub.BotName)
+	c.Integrations.GitHub.MCPURL = strings.TrimSpace(c.Integrations.GitHub.MCPURL)
 
-	c.SlackToken = strings.TrimSpace(c.SlackToken)
-	c.SlackSigningKey = strings.TrimSpace(c.SlackSigningKey)
-	c.SlackChannel = strings.TrimSpace(c.SlackChannel)
-	c.SlackVerifyTok = strings.TrimSpace(c.SlackVerifyTok)
+	c.Integrations.Slack.Token = strings.TrimSpace(c.Integrations.Slack.Token)
+	c.Integrations.Slack.SigningKey = strings.TrimSpace(c.Integrations.Slack.SigningKey)
+	c.Integrations.Slack.Channel = strings.TrimSpace(c.Integrations.Slack.Channel)
+	c.Integrations.Slack.VerifyToken = strings.TrimSpace(c.Integrations.Slack.VerifyToken)
 
-	c.AgentCoreURL = strings.TrimSpace(c.AgentCoreURL)
-	c.Port = strings.TrimSpace(c.Port)
+	c.APIEndpoint = strings.TrimSpace(c.APIEndpoint)
+	c.APIKey = strings.TrimSpace(c.APIKey)
+	c.Server.Port = strings.TrimSpace(c.Server.Port)
 }
 
 func (c *Config) ValidateGitHubBotConfig() error {
-	if c.GitHubAppID != "" || c.GitHubInstallID != "" || c.GitHubPEMKey != "" {
-		if c.GitHubAppID == "" {
+	github := c.Integrations.GitHub
+	if github.AppID != "" || github.InstallID != "" || github.PEMKey != "" {
+		if github.AppID == "" {
 			return fmt.Errorf("GITHUB_APP_ID is required when using GitHub App authentication")
 		}
-		if c.GitHubInstallID == "" {
+		if github.InstallID == "" {
 			return fmt.Errorf("GITHUB_INSTALL_ID is required when using GitHub App authentication")
 		}
-		if c.GitHubPEMKey == "" {
+		if github.PEMKey == "" {
 			return fmt.Errorf("GITHUB_PEM_KEY is required when using GitHub App authentication")
 		}
 		return nil
 	}
 
-	if c.GitHubToken == "" {
+	if github.Token == "" {
 		return fmt.Errorf("either GitHub App credentials (GITHUB_APP_ID, GITHUB_INSTALL_ID, GITHUB_PEM_KEY) or GITHUB_TOKEN is required")
 	}
 

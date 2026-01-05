@@ -294,11 +294,12 @@ func (h *GitHubDeployHandler) generateBranchName(req NetworkUpdateRequest, fileC
 		networkName = req.DetectedNetworks[0]
 	}
 
-	cleanTag := strings.ReplaceAll(req.ReleaseTag, ".", "-")
-	cleanTag = strings.ReplaceAll(cleanTag, ":", "-")
-	cleanTag = strings.TrimPrefix(cleanTag, "v")
+	cleanTag := strings.ReplaceAll(req.ReleaseTag, ":", "-")
+	if !strings.HasPrefix(cleanTag, "v") {
+		cleanTag = "v" + cleanTag
+	}
 
-	branchName := fmt.Sprintf("upgrade/%s-to-%s", networkName, cleanTag)
+	branchName := fmt.Sprintf("upgrade/%s-%s", networkName, cleanTag)
 
 	timestamp := time.Now().Unix()
 	return fmt.Sprintf("%s-%d", branchName, timestamp)

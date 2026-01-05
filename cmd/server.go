@@ -31,26 +31,26 @@ func runServer() {
 		os.Exit(1)
 	}
 
-	if strings.TrimSpace(cfg.SlackToken) == "" || strings.TrimSpace(cfg.SlackSigningKey) == "" {
-		logger.Error("Slack configuration missing", "has_token", cfg.SlackToken != "", "has_signing_key", cfg.SlackSigningKey != "")
+	if strings.TrimSpace(cfg.Integrations.Slack.Token) == "" || strings.TrimSpace(cfg.Integrations.Slack.SigningKey) == "" {
+		logger.Error("Slack configuration missing", "has_token", cfg.Integrations.Slack.Token != "", "has_signing_key", cfg.Integrations.Slack.SigningKey != "")
 		os.Exit(1)
 	}
 
-	if strings.TrimSpace(cfg.AgentCoreURL) == "" {
-		logger.Error("nodeoperator api URL is not configured; set AGENT_CORE_URL")
+	if strings.TrimSpace(cfg.APIEndpoint) == "" {
+		logger.Error("api_endpoint is not configured in ponos.yml")
 		os.Exit(1)
 	}
 
-	if strings.TrimSpace(cfg.GitHubMCPURL) == "" {
-		logger.Warn("GITHUB_MCP_URL is empty; GitHub MCP calls may fail", "github_mcp_url", cfg.GitHubMCPURL)
+	if strings.TrimSpace(cfg.Integrations.GitHub.MCPURL) == "" {
+		logger.Warn("GitHub MCP URL is empty; GitHub MCP calls may fail", "github_mcp_url", cfg.Integrations.GitHub.MCPURL)
 	}
 
-	api := slack.New(cfg.SlackToken)
+	api := slack.New(cfg.Integrations.Slack.Token)
 
 	bot := NewBot(cfg, logger, api, true)
 
 	// TODO: For complete separattion of concerns and to ease the pain of users having to setup ngrok for webhook listeners, the whole server logic should be moved to the api backend
-	if cfg.EnableReleaseListener {
+	if cfg.Server.EnableReleaseListener {
 		webhookHandler := NewWebhookHandler(bot)
 		http.HandleFunc("/webhooks/releases", webhookHandler.handleReleasesWebhook)
 		logger.Info("release listener enabled", "path", "/webhooks/releases")
@@ -64,13 +64,13 @@ func runServer() {
 	http.HandleFunc("/mcp/github", bot.handleGitHubMCP)
 
 	srv := &http.Server{
-		Addr:         ":" + cfg.Port,
+		Addr:         ":" + cfg.Server.Port,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
 
 	go func() {
-		logger.Info("starting server", "port", cfg.Port)
+		logger.Info("starting server", "port", cfg.Server.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("failed to start server", "error", err)
 			os.Exit(1)
