@@ -1,31 +1,39 @@
-# Ponos Configuration Example
-# This file demonstrates how to configure Ponos for automated node operations
-# Copy this file to ponos.yml and customize for your environment
-
 version: 1
 
-# GitHub configuration
-github_token: "ghp_your_github_token_here"
-github_app_id: ""
-github_install_id: ""
-github_pem_key: ""
-github_bot_name: "ponos-bot"
-github_mcp_url: "http://localhost:3001"
+api_endpoint: "https://api.nodeoperator.ai"
+api_key: "your_api_key_here"
 
-# Slack configuration
-slack_token: "xoxb_your_slack_bot_token_here"
-slack_signing_key: "your_slack_signing_secret_here"
-slack_verify_token: ""
-slack_channel: "sre-tasks"
+integrations:
+  github:
+    token: "ghp_your_github_token_here"
+    app_id: ""
+    install_id: ""
+    pem_key: ""
+    bot_name: "ponos-bot"
+    mcp_url: "http://localhost:3001"
+  
+  slack:
+    token: "xoxb_your_slack_bot_token_here"
+    signing_key: "your_slack_signing_secret_here"
+    verify_token: ""
+    channel: "sre-tasks"
 
-# Agent Core connection
-agent_core_url: "https://api.nodeoperator.ai"
+diagnostics:
+  enabled: true
+  github:
+    owner: "your-org"
+    repo: "infrastructure-issues"
+  kubernetes:
+    namespace: "default"
+    resource_type: "deployment"
+  monitoring:
+    service: "your-service-name"
+    log_tail: 500
+    eval_interval: 2
 
-# Server configuration
-port: "8080"
-enable_release_listener: false
-
-# Projects configuration (replaces repo-config.yaml)
+server:
+  port: "8080"
+  enable_release_listener: false
 projects:
   # Ethereum consensus client example
   - network: ethereum

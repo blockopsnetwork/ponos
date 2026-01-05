@@ -99,51 +99,70 @@ make run-ponos
 
 ## Configuration
 
-Configuration is provided via environment variables.
+Configuration is provided via `ponos.yml` file. Copy `ponos.yml.example` to `ponos.yml` and customize for your environment.
 
-### Required Environment Variables
+### Configuration Structure
 
-#### GitHub Authentication
+```yaml
+version: 1
 
-Choose one of the following GitHub authentication methods:
+api_endpoint: "https://api.nodeoperator.ai"
+api_key: "your_api_key_here"
+
+integrations:
+  github:
+    # Choose one authentication method:
+    token: "ghp_xxx"  # Personal Access Token (PAT)
+    # OR GitHub App (recommended for production):
+    app_id: "123456"
+    install_id: "654321"
+    pem_key: "/path/to/pem/key"
+    bot_name: "ponos-bot"
+    mcp_url: "http://localhost:3001"
+  
+  slack:
+    token: "xoxb-xxx"
+    signing_key: "your_slack_signing_secret"
+    verify_token: "your_slack_verification_token"
+    channel: "sre-tasks"
+
+# Diagnostics & monitoring (optional)
+diagnostics:
+  enabled: false
+  github:
+    owner: "your-org"
+    repo: "infrastructure-issues"
+  kubernetes:
+    namespace: "default"
+    resource_type: "deployment"
+  monitoring:
+    service: "your-service-name"
+    log_tail: 500
+    eval_interval: 2
+
+# Server settings
+server:
+  port: "8080"
+  enable_release_listener: false
+```
+
+### GitHub Authentication
 
 **Personal Access Token (PAT)**
 - Simpler setup for development and personal use
 - Uses your personal GitHub account credentials
 - Requires `repo` scope for private repositories
-- All operations appear as your GitHub user
+- Set `integrations.github.token` only
 
 **GitHub App (Recommended)**
 - Recommended for production and organizational use
 - More secure with fine-grained permissions
-- Operations appear as the configured bot name (`GITHUB_BOT_NAME`)
-- Supports installation across multiple repositories
-- Better audit trail and access control
-
-```bash
-# 1: Personal Access Token 
-GITHUB_TOKEN=ghp_xxx
-or
-# 2: GitHub App (recommended)
-GITHUB_APP_ID=123456
-GITHUB_INSTALL_ID=654321
-GITHUB_PEM_KEY=/path/to/pem/key
-
-# Slack Integration
-SLACK_TOKEN=xoxb-xxx
-SLACK_SIGNING_SECRET=xxx
-SLACK_CHANNEL=sre-tasks
-
-# Agent Core: This is where the LLM brain lives, for enterprises, you can self-host this on your own environment
-# ToDo: Api Authentication
-AGENT_CORE_URL=http://api.nodeoperator.ai
-```
+- Operations appear as the configured bot name
+- Set `integrations.github.app_id`, `install_id`, and `pem_key`
 
 ### Optional Environment Variables
 
 ```bash
-GITHUB_BOT_NAME=ponos-bot
-PORT=8080
 PONOS_TUI_LOG_PATH=/tmp/ponos.log
 ```
 
