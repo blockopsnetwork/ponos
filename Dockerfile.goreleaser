@@ -7,7 +7,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY ponos /ponos
 
 # Copy the configuration example
-COPY repo-config.yaml.example /etc/ponos/repo-config.yaml.example
+COPY ponos.yml.example /etc/ponos/ponos.yml.example
 
 USER nonroot:nonroot
 
