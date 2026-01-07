@@ -254,7 +254,7 @@ type AuthenticatedTransport struct {
 
 func (t *AuthenticatedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if t.APIKey != "" {
-		req.Header.Set("X-API-Key", t.APIKey)
+		req.Header.Set("Authorization", "Bearer "+t.APIKey)
 	}
 	return t.Transport.RoundTrip(req)
 }
