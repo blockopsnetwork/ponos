@@ -404,6 +404,10 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						err := m.tui.handleUserInputWithStreaming(ctx, userInput, m.conversationHistory, updates)
 						if err != nil {
 							m.tui.logger.Error("Error handling user input", "error", err)
+							// Send error message to TUI
+							if m.program != nil {
+								m.program.Send(msgResponse{content: "", err: err})
+							}
 						}
 					}()
 

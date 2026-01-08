@@ -67,7 +67,11 @@ func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, 
 	if cfg.APIKey != "" {
 		go func() {
 			if err := bot.syncConfigToAgentCore(); err != nil {
-				logger.Error("Failed to sync configuration to agent-core", "error", err)
+				if strings.Contains(err.Error(), "authentication failed") {
+					logger.Error("Failed to sync configuration to agent-core: Authentication failed. Check your API key in ponos.yml", "error", err)
+				} else {
+					logger.Error("Failed to sync configuration to agent-core", "error", err)
+				}
 			} else {
 				logger.Info("Configuration synced to agent-core successfully")
 			}
@@ -623,6 +627,9 @@ func (b *Bot) doJSON(ctx context.Context, method, url string, in any, out any) e
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("authentication failed: invalid or missing API key for agent-core (HTTP 401)")
+		}
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
@@ -725,6 +732,7 @@ func (b *Bot) trySyncConfig(ctx context.Context) error {
 	ponosConfigPayload := map[string]any{
 		"integrations": map[string]any{
 			"github": map[string]any{
+				"token":      b.config.Integrations.GitHub.Token,
 				"app_id":     b.config.Integrations.GitHub.AppID,
 				"install_id": b.config.Integrations.GitHub.InstallID,
 				"pem_key":    b.config.Integrations.GitHub.PEMKey,
@@ -882,6 +890,9 @@ func (b *Bot) StreamConversation(ctx context.Context, userMessage string, conver
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("authentication failed: invalid or missing API key for agent-core (HTTP 401)")
+		}
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
