@@ -732,6 +732,7 @@ func (b *Bot) trySyncConfig(ctx context.Context) error {
 	ponosConfigPayload := map[string]any{
 		"integrations": map[string]any{
 			"github": map[string]any{
+				"token":      b.config.Integrations.GitHub.Token,
 				"app_id":     b.config.Integrations.GitHub.AppID,
 				"install_id": b.config.Integrations.GitHub.InstallID,
 				"pem_key":    b.config.Integrations.GitHub.PEMKey,
