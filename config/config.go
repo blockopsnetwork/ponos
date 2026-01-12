@@ -18,8 +18,20 @@ type Config struct {
 }
 
 type IntegrationsConfig struct {
-	GitHub GitHubConfig `yaml:"github"`
-	Slack  SlackConfig  `yaml:"slack"`
+	GitHub    GitHubConfig    `yaml:"github"`
+	Slack     SlackConfig     `yaml:"slack"`
+	Telescope TelescopeConfig `yaml:"telescope"`
+}
+
+type TelescopeConfig struct {
+	ProjectID          string `yaml:"project_id"`
+	ProjectName        string `yaml:"project_name"`
+	PrometheusURL      string `yaml:"prometheus_url"`
+	PrometheusUsername string `yaml:"prometheus_username"`
+	PrometheusPassword string `yaml:"prometheus_password"`
+	LokiURL            string `yaml:"loki_url"`
+	LokiUsername       string `yaml:"loki_username"`
+	LokiPassword       string `yaml:"loki_password"`
 }
 
 type GitHubConfig struct {
@@ -40,9 +52,15 @@ type SlackConfig struct {
 
 type DiagnosticsConfig struct {
 	Enabled    bool                        `yaml:"enabled"`
+	Provider   string                      `yaml:"provider"`
 	GitHub     DiagnosticsGitHubConfig     `yaml:"github"`
+	Slack      DiagnosticsSlackConfig      `yaml:"slack"`
 	Kubernetes DiagnosticsKubernetesConfig `yaml:"kubernetes"`
 	Monitoring DiagnosticsMonitoringConfig `yaml:"monitoring"`
+}
+
+type DiagnosticsSlackConfig struct {
+	Channel string `yaml:"channel"`
 }
 
 type DiagnosticsGitHubConfig struct {
