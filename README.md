@@ -2,7 +2,7 @@
 
 **Ponos** (Greek: Πόνος) means *toil*, *labor*, or *sustained effort*.  
 
-Ponos takes on that toil for operators. It is the terminal interface for **nodeoperator.ai**, an autonomous nodeoperator agent that deploys, manages, and remediates issues with blockchain infrastructures through GitHub-based workflows.
+Ponos takes on that toil for node operators. It is the terminal interface for **nodeoperator.ai**, an autonomous nodeoperator agent that deploys, manages, and remediates issues with blockchain infrastructures through GitHub-based workflows.
 
 ## Interaction Interfaces
 
@@ -119,19 +119,33 @@ integrations:
     pem_key: "/path/to/pem/key"
     bot_name: "ponos-bot"
     mcp_url: "http://localhost:3001"
-  
+
   slack:
     token: "xoxb-xxx"
     signing_key: "your_slack_signing_secret"
     verify_token: "your_slack_verification_token"
     channel: "sre-tasks"
 
+  # Telescope observability (for node metrics, logs, and blockchain client metrics - see https://github.com/blockopsnetwork/telescope)
+  telescope:
+    project_id: ""
+    project_name: "your-project-name"
+    prometheus_url: "https://your-prometheus-endpoint"
+    prometheus_username: ""
+    prometheus_password: ""
+    loki_url: "https://your-loki-endpoint"
+    loki_username: ""
+    loki_password: ""
+
 # Diagnostics & monitoring (optional)
 diagnostics:
   enabled: false
+  provider: "telescope"  # Options: telescope, kubernetes
   github:
     owner: "your-org"
     repo: "infrastructure-issues"
+  slack:
+    channel: "sre-tasks"
   kubernetes:
     namespace: "default"
     resource_type: "deployment"
@@ -159,6 +173,32 @@ server:
 - More secure with fine-grained permissions
 - Operations appear as the configured bot name
 - Set `integrations.github.app_id`, `install_id`, and `pem_key`
+
+### Telescope Integration
+
+Telescope provides observability for blockchain nodes, including system metrics (CPU, memory, disk), blockchain client metrics (sync status, peers, attestations), and container logs.
+
+| Field | Description |
+|-------|-------------|
+| `project_id` | Telescope project identifier |
+| `project_name` | Project name for multi-tenant scoping |
+| `prometheus_url` | Prometheus/Thanos endpoint for metrics |
+| `prometheus_username` | Basic auth username |
+| `prometheus_password` | Basic auth password |
+| `loki_url` | Loki endpoint for logs |
+| `loki_username` | Basic auth username |
+| `loki_password` | Basic auth password |
+
+See [Telescope documentation](https://github.com/blockopsnetwork/telescope) for setup.
+
+### Diagnostics Provider
+
+The `diagnostics.provider` field determines where Ponos fetches node metrics and logs:
+
+| Provider | Description |
+|----------|-------------|
+| `telescope` | Uses Telescope's Prometheus and Loki endpoints for metrics and logs |
+| `kubernetes` | Queries Kubernetes API directly for pod logs and resource metrics |
 
 ### Optional Environment Variables
 
