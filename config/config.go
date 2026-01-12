@@ -102,18 +102,19 @@ func Load() (*Config, error) {
 	if _, err := os.Stat("ponos.yml"); err != nil {
 		return nil, fmt.Errorf("Ponos config (ponos.yml) missing, ensure you add the ponos.yml in the root directory")
 	}
-	
+
 	data, err := os.ReadFile("ponos.yml")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read ponos.yml: %w", err)
 	}
-	
+
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("invalid ponos.yml format: %w", err)
 	}
-	
+
 	cfg.Sanitize()
+
 	return &cfg, nil
 }
 
