@@ -728,8 +728,8 @@ func (b *Bot) syncConfigToAgentCore() error {
 	return fmt.Errorf("sync failed after %v and %d attempts", maxDuration, attempt)
 }
 
-func (b *Bot) trySyncConfig(ctx context.Context) error {
-	ponosConfigPayload := map[string]any{
+func (b *Bot) buildPonosConfigPayload() map[string]any {
+	payload := map[string]any{
 		"integrations": map[string]any{
 			"github": map[string]any{
 				"token":      b.config.Integrations.GitHub.Token,
@@ -744,20 +744,30 @@ func (b *Bot) trySyncConfig(ctx context.Context) error {
 				"verify_token": b.config.Integrations.Slack.VerifyToken,
 				"channel":      b.config.Integrations.Slack.Channel,
 			},
+			"telescope": map[string]any{
+				"project_id":          b.config.Integrations.Telescope.ProjectID,
+				"project_name":        b.config.Integrations.Telescope.ProjectName,
+				"prometheus_url":      b.config.Integrations.Telescope.PrometheusURL,
+				"prometheus_username": b.config.Integrations.Telescope.PrometheusUsername,
+				"prometheus_password": b.config.Integrations.Telescope.PrometheusPassword,
+				"loki_url":            b.config.Integrations.Telescope.LokiURL,
+				"loki_username":       b.config.Integrations.Telescope.LokiUsername,
+				"loki_password":       b.config.Integrations.Telescope.LokiPassword,
+			},
 		},
 		"projects": b.config.Projects,
 	}
 
 	if b.config.Diagnostics.Enabled {
-		ponosConfigPayload["diagnostics"] = map[string]any{
-			"enabled": true,
+		diagnosticsPayload := map[string]any{
+			"enabled":  true,
+			"provider": b.config.Diagnostics.Provider,
 			"github": map[string]any{
 				"owner": b.config.Diagnostics.GitHub.Owner,
 				"repo":  b.config.Diagnostics.GitHub.Repo,
 			},
-			"kubernetes": map[string]any{
-				"namespace":     b.config.Diagnostics.Kubernetes.Namespace,
-				"resource_type": b.config.Diagnostics.Kubernetes.ResourceType,
+			"slack": map[string]any{
+				"channel": b.config.Diagnostics.Slack.Channel,
 			},
 			"monitoring": map[string]any{
 				"service":       b.config.Diagnostics.Monitoring.Service,
@@ -765,11 +775,22 @@ func (b *Bot) trySyncConfig(ctx context.Context) error {
 				"eval_interval": b.config.Diagnostics.Monitoring.EvalInterval,
 			},
 		}
+		if b.config.Diagnostics.Provider == "kubernetes" {
+			diagnosticsPayload["kubernetes"] = map[string]any{
+				"namespace":     b.config.Diagnostics.Kubernetes.Namespace,
+				"resource_type": b.config.Diagnostics.Kubernetes.ResourceType,
+			}
+		}
+		payload["diagnostics"] = diagnosticsPayload
 	}
 
+	return payload
+}
+
+func (b *Bot) trySyncConfig(ctx context.Context) error {
 	requestData := map[string]any{
 		"message":      "Configuration sync",
-		"ponos_config": ponosConfigPayload,
+		"ponos_config": b.buildPonosConfigPayload(),
 	}
 
 	url := fmt.Sprintf("%s/agent/stream", b.agentCoreURL)
@@ -860,6 +881,7 @@ func (b *Bot) StreamConversation(ctx context.Context, userMessage string, conver
 				"blockchain_analysis",
 			},
 		},
+		"ponos_config": b.buildPonosConfigPayload(),
 	}
 
 	if len(conversationHistory) > 0 {
