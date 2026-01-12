@@ -1,6 +1,7 @@
 version: 1
 
 api_endpoint: "https://api.nodeoperator.ai"
+api_key: "your_api_key_here"
 
 integrations:
   github:
