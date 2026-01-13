@@ -12,6 +12,12 @@ Ponos takes on that toil for node operators. It is the terminal interface for **
 
 ## Installation
 
+### Quick install (recommended)
+
+```bash
+curl -sSL https://nodeoperator.ai/install.sh | sh
+```
+
 ### Build from source
 
 ```bash
