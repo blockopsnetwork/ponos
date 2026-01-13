@@ -1,0 +1,43 @@
+name: Sync install.sh to website
+
+on:
+  push:
+    branches:
+      - main
+  release:
+    types:
+      - published
+
+jobs:
+  sync-install:
+    runs-on: ubuntu-latest
+    if: github.repository == 'blockopsnetwork/ponos' && github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout ponos
+        uses: actions/checkout@v4
+
+      - name: Checkout website repo
+        uses: actions/checkout@v4
+        with:
+          repository: blockops-sh/nodeoperator-ai-client
+          token: ${{ secrets.NODEOPERATOR_SITE_TOKEN }}
+          path: site
+
+      - name: Copy install script
+        run: |
+          cp scripts/install.sh site/public/install.sh
+
+      - name: Commit and push if changed
+        run: |
+          cd site
+          if [ -n "$(git status --porcelain)" ]; then
+            git add public/install.sh
+            git config user.name "nodeoperator-ci"
+            git config user.email "ci@nodeoperator.ai"
+            git commit -m "chore: sync install.sh"
+            git push
+          else
+            echo "No changes to commit"
+          fi
