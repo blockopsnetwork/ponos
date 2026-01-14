@@ -226,7 +226,8 @@ case ":$PATH:" in
   *":${INSTALL_DIR}:"*) ;;
   *)
     log "Note: ${INSTALL_DIR} is not in your PATH"
-    log "Add it to your shell profile if needed."
+    log "Add this line to your shell profile (~/.zshrc or ~/.bashrc):"
+    log "  export PATH=\"${INSTALL_DIR}:\$PATH\""
     ;;
 esac
 
