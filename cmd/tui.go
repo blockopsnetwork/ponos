@@ -65,7 +65,6 @@ var (
 
 const (
 	appName = "Ponos Agent"
-	version = "v0.2.0"
 
 	asciiLogo = `
 ██████╗  ██████╗ ███╗   ██╗ ██████╗ ███████╗
