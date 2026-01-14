@@ -3,52 +3,11 @@ version: 1
 api_endpoint: "https://api.nodeoperator.ai"
 api_key: "your_api_key_here"
 
-version: 1
-
-api_endpoint: "https://api.nodeoperator.ai"
-api_key: "your_api_key_here"
-
 integrations:
   github:
     token: "ghp_your_github_token_here"
-
-  slack:
-    token: "xoxb_your_slack_bot_token_here"
-    signing_key: "your_slack_signing_secret_here"
-
-
-integrations:
-  github:
-    token: "ghp_your_github_token_here"
-
-
-  slack:
-    token: "xoxb_your_slack_bot_token_here"
-    signing_key: "your_slack_signing_secret_here"
-    verify_token: ""
-    channel: "sre-tasks"
-
-  # Telescope observability (for node metrics, logs, and blockchain client metrics - see https://github.com/blockopsnetwork/telescope)
-  telescope:
-    project_id: ""
-    project_name: "your-project-name"
-    prometheus_url: "https://your-prometheus-endpoint"
-    prometheus_username: ""
-    prometheus_password: ""
-    loki_url: "https://your-loki-endpoint"
-    loki_username: ""
-    loki_password: ""
-
-diagnostics:
-  enabled: true
-  provider: "telescope"  # Options: telescope, kubernetes
-  github:
-    owner: "your-org"
-    repo: "infrastructure-issues"
-  slack:
-    channel: "sre-tasks"
-  monitoring:
-    service: "your-service-name"
-    log_tail: 500
-    eval_interval: 2
   
+  slack:
+    token: "xoxb_your_slack_bot_token_here"
+    signing_key: "your_slack_signing_secret_here"
+

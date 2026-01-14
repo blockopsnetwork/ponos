@@ -14,6 +14,8 @@ import (
 	"github.com/slack-go/slack"
 )
 
+var version = "dev"
+
 func main() {
 	flag.Parse()
 
