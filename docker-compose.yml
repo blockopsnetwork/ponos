@@ -1,6 +1,6 @@
 services:
   ponos-server:
-    image: blockopsnetwork/ponos-server:latest
+    image: ghcr.io/blockopsnetwork/ponos-server:latest
     ports:
       - "8080:8080"
     environment:
@@ -28,4 +28,3 @@ services:
 
 networks:
   ponos:
-
