@@ -53,7 +53,13 @@ confirm() {
     return 1
   fi
   printf '%s [y/N] ' "$1"
-  read -r answer
+  if [ -t 0 ]; then
+    read -r answer
+  elif [ -r /dev/tty ]; then
+    read -r answer < /dev/tty
+  else
+    answer=""
+  fi
   case "$answer" in
     y|Y|yes|YES) return 0 ;;
     *) return 1 ;;
@@ -238,14 +244,10 @@ fi
 
 config_target="${HOME}/.config/ponos/ponos.yml"
 if [ ! -f "ponos.yml" ] && [ ! -f "$config_target" ] && [ ! -f "/etc/ponos/ponos.yml" ] && [ -n "$config_example" ] && [ -f "$config_example" ]; then
-  if confirm "Create ${config_target} from example config?"; then
-    mkdir -p "$(dirname "$config_target")"
-    cp "$config_example" "$config_target"
-    log "Config created at ${config_target}"
-    log "Set PONOS_CONFIG_PATH to point to a different config if needed."
-  else
-    log "Skipping config creation. Place ponos.yml in your working directory or set PONOS_CONFIG_PATH."
-  fi
+  mkdir -p "$(dirname "$config_target")"
+  cp "$config_example" "$config_target"
+  log "Config created at ${config_target}"
+  log "Set PONOS_CONFIG_PATH to point to a different config if needed."
 fi
 
 log "Example config: https://github.com/blockopsnetwork/ponos/blob/main/ponos.yml.example"
