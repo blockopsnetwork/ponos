@@ -125,8 +125,8 @@ var helperCommands = []HelperCommand{
 	{Command: "/help", Description: "Show detailed help and shortcuts"},
 	{Command: "/status", Description: "Show configured tokens and working directory"},
 	{Command: "/clear", Description: "Clear chat history"},
-	{Command: "upgrade polkadot", Description: "Upgrade a network to the latest release"},
-	{Command: "diagnose polkadot", Description: "Run diagnostics for a network"},
+	{Command: "upgrade <network>", Description: "Upgrade a network to the latest release"},
+	{Command: "diagnose <network>", Description: "Run diagnostics for a network"},
 }
 
 type ChatMessage struct {
