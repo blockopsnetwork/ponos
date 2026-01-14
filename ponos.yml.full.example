@@ -1,0 +1,80 @@
+version: 1
+
+api_endpoint: "https://api.nodeoperator.ai"
+api_key: "your_api_key_here"
+
+integrations:
+  github:
+    token: "ghp_your_github_token_here"
+    app_id: ""
+    install_id: ""
+    pem_key: ""
+    bot_name: "ponos-bot"
+    mcp_url: "http://localhost:3001"
+
+  slack:
+    token: "xoxb_your_slack_bot_token_here"
+    signing_key: "your_slack_signing_secret_here"
+    verify_token: ""
+    channel: "sre-tasks"
+
+  # Telescope observability (for node metrics, logs, and blockchain client metrics - see https://github.com/blockopsnetwork/telescope)
+  telescope:
+    project_id: ""
+    project_name: "your-project-name"
+    prometheus_url: "https://your-prometheus-endpoint"
+    prometheus_username: ""
+    prometheus_password: ""
+    loki_url: "https://your-loki-endpoint"
+    loki_username: ""
+    loki_password: ""
+
+diagnostics:
+  enabled: true
+  provider: "telescope"  # Options: telescope, kubernetes
+  github:
+    owner: "your-org"
+    repo: "infrastructure-issues"
+  slack:
+    channel: "sre-tasks"
+  monitoring:
+    service: "your-service-name"
+    log_tail: 500
+    eval_interval: 2
+
+server:
+  port: "8080"
+  enable_release_listener: false
+projects:
+  # Ethereum consensus client example
+  - network: ethereum
+    project_name: eth-consensus-client
+    owner: your-org
+    name: ethereum-deployments
+    branch: main
+    paths:
+      - "deployments/prysm/values.yaml"
+      - "deployments/lighthouse/values.yaml"
+      - "k8s/ethereum/prysm-deployment.yaml"
+
+  # Ethereum execution client example
+  - network: ethereum
+    project_name: eth-execution-client
+    owner: your-org
+    name: ethereum-deployments
+    branch: main
+    paths:
+      - "deployments/geth/values.yaml"
+      - "deployments/nethermind/values.yaml"
+      - "k8s/ethereum/geth-deployment.yaml"
+
+  # Polkadot validator example
+  - network: polkadot
+    project_name: polkadot-validator
+    owner: your-org
+    name: polkadot-infrastructure
+    branch: main
+    paths:
+      - "helm/polkadot/values.yaml"
+      - "k8s/polkadot-deployment.yaml"
+      - "docker-compose/polkadot.yml"
