@@ -111,10 +111,22 @@ case "$ARCH" in
 esac
 
 if [ -z "$INSTALL_DIR" ]; then
-  if [ -w "/usr/local/bin" ]; then
-    INSTALL_DIR="/usr/local/bin"
-  else
+  for dir in /usr/local/bin /usr/bin "${HOME}/.local/bin"; do
+    if [ -d "$dir" ] && [ -w "$dir" ]; then
+      INSTALL_DIR="$dir"
+      break
+    fi
+  done
+  if [ -z "$INSTALL_DIR" ]; then
     INSTALL_DIR="${HOME}/.local/bin"
+  fi
+fi
+
+if [ ! -d "$INSTALL_DIR" ]; then
+  if [ -w "$(dirname "$INSTALL_DIR")" ]; then
+    mkdir -p "$INSTALL_DIR"
+  else
+    die "Install directory does not exist and is not writable: $INSTALL_DIR"
   fi
 fi
 
@@ -218,4 +230,29 @@ case ":$PATH:" in
     ;;
 esac
 
+config_example="${tmp_dir}/ponos.yml.example"
+if [ ! -f "$config_example" ]; then
+  config_example=$(find "$tmp_dir" -maxdepth 2 -type f -name ponos.yml.example | head -n 1 || true)
+fi
+
+config_target="${HOME}/.config/ponos/ponos.yml"
+if [ ! -f "ponos.yml" ] && [ ! -f "$config_target" ] && [ ! -f "/etc/ponos/ponos.yml" ] && [ -n "$config_example" ] && [ -f "$config_example" ]; then
+  if confirm "Create ${config_target} from example config?"; then
+    mkdir -p "$(dirname "$config_target")"
+    cp "$config_example" "$config_target"
+    log "Config created at ${config_target}"
+    log "Set PONOS_CONFIG_PATH to point to a different config if needed."
+  else
+    log "Skipping config creation. Place ponos.yml in your working directory or set PONOS_CONFIG_PATH."
+  fi
+fi
+
 log "Example config: https://github.com/blockopsnetwork/ponos/blob/main/ponos.yml.example"
+log ""
+log "Installation completed!"
+log "Next steps:"
+log "1. Visit https://platform.nodeoperator.ai/"
+log "2. Enter your email to receive a magic link"
+log "3. Open the link to sign in and copy your API key"
+log "4. Paste api_key into ponos.yml"
+log "5. Run: ponos"

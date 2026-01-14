@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -99,13 +100,28 @@ type Project struct {
 }
 
 func Load() (*Config, error) {
-	if _, err := os.Stat("ponos.yml"); err != nil {
-		return nil, fmt.Errorf("Ponos config (ponos.yml) missing, ensure you add the ponos.yml in the root directory")
+	configPath := os.Getenv("PONOS_CONFIG_PATH")
+	if configPath == "" {
+		paths := []string{"ponos.yml"}
+		if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+			paths = append(paths, filepath.Join(homeDir, ".config", "ponos", "ponos.yml"))
+		}
+		paths = append(paths, filepath.Join(string(os.PathSeparator), "etc", "ponos", "ponos.yml"))
+		for _, candidate := range paths {
+			if _, err := os.Stat(candidate); err == nil {
+				configPath = candidate
+				break
+			}
+		}
 	}
-	
-	data, err := os.ReadFile("ponos.yml")
+
+	if configPath == "" {
+		return nil, fmt.Errorf("Ponos config missing; set PONOS_CONFIG_PATH or add ponos.yml in the current directory or ~/.config/ponos/ponos.yml")
+	}
+
+	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read ponos.yml: %w", err)
+		return nil, fmt.Errorf("failed to read ponos.yml at %s: %w", configPath, err)
 	}
 	
 	var cfg Config
