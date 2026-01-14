@@ -300,5 +300,8 @@ func replaceBinary(targetPath, newBinaryPath string) error {
 		return fmt.Errorf("failed to write temp binary: %w", err)
 	}
 
-	return os.Rename(tmpName, targetPath)
+	if err := os.Rename(tmpName, targetPath); err != nil {
+		return err
+	}
+	return os.Chmod(targetPath, 0o755)
 }
