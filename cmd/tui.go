@@ -100,6 +100,7 @@ type tuiModel struct {
 	cancelThinking      context.CancelFunc
 	showHelp            bool
 	animationFrame      int
+	updateNotice        string
 
 	isStreaming        bool
 	streamingMessageID string
@@ -615,11 +616,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case updateNotice:
-		m.messages = append(m.messages, ChatMessage{
-			Role:      "system",
-			Content:   fmt.Sprintf("Update available: %s. Run `ponos upgrade` to update.", msg.latest),
-			Timestamp: time.Now(),
-		})
+		m.updateNotice = msg.latest
 		m.updateViewportContent()
 
 	case tea.Msg:
@@ -692,6 +689,9 @@ func (m *tuiModel) View() string {
 	sections = append(sections, m.textarea.View())
 
 	leftHelp := "/help for help and / to see available commands"
+	if m.updateNotice != "" {
+		leftHelp = fmt.Sprintf("Update available: %s (run `ponos upgrade`) • %s", m.updateNotice, leftHelp)
+	}
 	rightHelp := "⌘P to generate a command to know what ponos can do for you"
 	if m.loading {
 		indicator := m.getAnimatedIndicator()
