@@ -156,6 +156,10 @@ type animationUpdate struct {
 	frame int
 }
 
+type updateNotice struct {
+	latest string
+}
+
 func NewPonosAgentTUI(bot *Bot, logger *slog.Logger) *PonosAgentTUI {
 	return &PonosAgentTUI{
 		bot:    bot,
@@ -172,6 +176,7 @@ func (tui *PonosAgentTUI) Start() error {
 	)
 
 	model.program = p
+	go tui.checkForUpdates(p)
 
 	_, err := p.Run()
 	return err
@@ -608,6 +613,14 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.loading {
 			m.animationFrame = msg.frame
 		}
+
+	case updateNotice:
+		m.messages = append(m.messages, ChatMessage{
+			Role:      "system",
+			Content:   fmt.Sprintf("Update available: %s. Run `ponos upgrade` to update.", msg.latest),
+			Timestamp: time.Now(),
+		})
+		m.updateViewportContent()
 
 	case tea.Msg:
 		if msg == "loading_done" {
