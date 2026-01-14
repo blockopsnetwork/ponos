@@ -67,15 +67,15 @@ func NewBot(cfg *config.Config, logger *slog.Logger, slackClient *slack.Client, 
 	if cfg.APIKey != "" {
 		go func() {
 			if err := bot.syncConfigToAgentCore(); err != nil {
-				if strings.Contains(err.Error(), "authentication failed") {
-					logger.Error("Failed to sync configuration to agent-core: Authentication failed. Check your API key in ponos.yml", "error", err)
-				} else {
-					logger.Error("Failed to sync configuration to agent-core", "error", err)
-				}
+			if strings.Contains(err.Error(), "authentication failed") {
+				logger.Error("Failed to sync configuration to Nodeoperator API: Authentication failed. Check your API key in ponos.yml", "error", err)
 			} else {
-				logger.Info("Configuration synced to agent-core successfully")
+				logger.Error("Failed to sync configuration to Nodeoperator API", "error", err)
 			}
-		}()
+		} else {
+			logger.Info("Configuration synced to Nodeoperator API successfully")
+		}
+	}()
 	}
 
 	return bot
@@ -478,9 +478,9 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 	ack := fmt.Sprintf(":wave: <@%s> working on \"%s\" …", userID, userMessage)
 	b.postThreadedSlackMessage(channel, threadTS, ack)
 
-	// Check if agent-core URL is configured
+	// Check if Nodeoperator API URL is configured
 	if b.agentCoreURL == "" {
-		b.postThreadedSlackMessage(channel, threadTS, ":x: Agent service is not available. Please check if agent-core is running.")
+		b.postThreadedSlackMessage(channel, threadTS, ":x: Nodeoperator API is not available. Please check its status and URL.")
 		return
 	}
 
@@ -628,7 +628,7 @@ func (b *Bot) doJSON(ctx context.Context, method, url string, in any, out any) e
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		if resp.StatusCode == http.StatusUnauthorized {
-			return fmt.Errorf("authentication failed: invalid or missing API key for agent-core (HTTP 401)")
+			return fmt.Errorf("authentication failed: missing or invalid API key. Get one at https://platform.nodeoperator.ai/ and set api_key in ponos.yml")
 		}
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
@@ -818,11 +818,11 @@ func (b *Bot) ProcessReleaseUpdate(ctx context.Context, payload ReleasesWebhookP
 	url := fmt.Sprintf("%s/blockchain/analyze-release", b.agentCoreURL)
 	var result AgentSummary
 	if err := b.doJSON(ctx, "POST", url, request, &result); err != nil {
-		return nil, fmt.Errorf("agent-core request failed: %w", err)
+		return nil, fmt.Errorf("Nodeoperator API request failed: %w", err)
 	}
 
 	if !result.Success {
-		return nil, fmt.Errorf("agent-core analysis failed: %s", result.Error)
+		return nil, fmt.Errorf("Nodeoperator API analysis failed: %s", result.Error)
 	}
 
 	return &result, nil
@@ -849,12 +849,12 @@ If no blockchain containers found, return: []`, yamlContent)
 	url := fmt.Sprintf("%s/agent/simple", b.agentCoreURL)
 	var response map[string]any
 	if err := b.doJSON(ctx, "POST", url, request, &response); err != nil {
-		return nil, fmt.Errorf("agent-core request failed: %w", err)
+		return nil, fmt.Errorf("Nodeoperator API request failed: %w", err)
 	}
 
 	content, ok := response["content"].(string)
 	if !ok {
-		return nil, fmt.Errorf("invalid response format from agent-core")
+		return nil, fmt.Errorf("invalid response format from Nodeoperator API")
 	}
 
 	// Parse JSON array from response
@@ -913,7 +913,7 @@ func (b *Bot) StreamConversation(ctx context.Context, userMessage string, conver
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		if resp.StatusCode == http.StatusUnauthorized {
-			return fmt.Errorf("authentication failed: invalid or missing API key for agent-core (HTTP 401)")
+			return fmt.Errorf("authentication failed: missing or invalid API key. Get one at https://platform.nodeoperator.ai/ and set api_key in ponos.yml")
 		}
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
@@ -1019,7 +1019,7 @@ func (b *Bot) processStreamingResponse(body io.Reader, updates chan<- StreamingU
 				CheckpointID: checkpointID,
 			}
 		case "error":
-			return fmt.Errorf("agent-core error: %s", message)
+			return fmt.Errorf("Nodeoperator API error: %s", message)
 		}
 	}
 
