@@ -374,6 +374,12 @@ func (b *Bot) triggerDiagnostics(service, channelID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	if b.config.APIKey != "" {
+		if err := b.trySyncConfig(ctx); err != nil {
+			return fmt.Errorf("failed to sync config to agent-core before diagnostics: %w", err)
+		}
+	}
+
 	payload := map[string]string{
 		"service": service,
 	}
@@ -786,6 +792,12 @@ func (b *Bot) buildPonosConfigPayload() map[string]any {
 }
 
 func (b *Bot) trySyncConfig(ctx context.Context) error {
+	if updated, err := config.Load(); err == nil {
+		b.config = updated
+	} else {
+		b.logger.Warn("Failed to reload ponos config before sync", "error", err)
+	}
+
 	requestData := map[string]any{
 		"message":      "Configuration sync",
 		"ponos_config": b.buildPonosConfigPayload(),
