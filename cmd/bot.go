@@ -478,7 +478,6 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 	ack := fmt.Sprintf(":wave: <@%s> working on \"%s\" …", userID, userMessage)
 	b.postThreadedSlackMessage(channel, threadTS, ack)
 
-	// Check if Nodeoperator API URL is configured
 	if b.agentCoreURL == "" {
 		b.postThreadedSlackMessage(channel, threadTS, ":x: Nodeoperator API is not available. Please check its status and URL.")
 		return
@@ -549,7 +548,6 @@ func (b *Bot) streamAgentResponseToSlack(event *slackevents.AppMentionEvent, use
 		finalResponse = "Done! Let me know if you need anything else."
 	}
 
-	// Only show tool summary if there are meaningful results and not too many
 	if len(toolSummaries) > 0 && len(toolSummaries) <= 5 {
 		finalResponse = fmt.Sprintf("%s\n\n*Tool summary:*\n%s", finalResponse, strings.Join(toolSummaries, "\n"))
 	} else if len(toolSummaries) > 5 {
@@ -857,7 +855,6 @@ If no blockchain containers found, return: []`, yamlContent)
 		return nil, fmt.Errorf("invalid response format from Nodeoperator API")
 	}
 
-	// Parse JSON array from response
 	var repos []string
 	if err := b.extractAndUnmarshalJSON(content, &repos); err != nil {
 		b.logger.Warn("Failed to parse YAML analysis response", "error", err, "response", content)
