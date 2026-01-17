@@ -332,6 +332,19 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			userInput := strings.TrimSpace(m.textarea.Value())
 			if userInput != "" && !m.loading {
+				if len(m.currentTodos) > 0 {
+					allDone := true
+					for _, todo := range m.currentTodos {
+						if todo.Status != "completed" {
+							allDone = false
+							break
+						}
+					}
+					if allDone {
+						m.currentTodos = nil
+						m.showTodos = false
+					}
+				}
 				if strings.HasPrefix(userInput, "/") {
 					switch userInput {
 					case "/", "/h", "/help":
