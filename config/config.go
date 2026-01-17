@@ -16,6 +16,7 @@ type Config struct {
 	Diagnostics  DiagnosticsConfig  `yaml:"diagnostics"`
 	Server       ServerConfig       `yaml:"server"`
 	Projects     []Project          `yaml:"projects"`
+	ConfigPath   string             `yaml:"-" json:"-"`
 }
 
 type IntegrationsConfig struct {
@@ -49,6 +50,7 @@ type SlackConfig struct {
 	SigningKey  string `envconfig:"SLACK_SIGNING_SECRET" default:"" yaml:"signing_key"`
 	VerifyToken string `envconfig:"SLACK_VERIFICATION_TOKEN" default:"" yaml:"verify_token"`
 	Channel     string `envconfig:"SLACK_CHANNEL" default:"sre-tasks" yaml:"channel"`
+	TeamID      string `envconfig:"SLACK_TEAM_ID" default:"" yaml:"team_id"`
 }
 
 type DiagnosticsConfig struct {
@@ -128,7 +130,7 @@ func Load() (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("invalid ponos.yml format: %w", err)
 	}
-	
+	cfg.ConfigPath = configPath
 	cfg.Sanitize()
 	return &cfg, nil
 }
@@ -145,6 +147,7 @@ func (c *Config) Sanitize() {
 	c.Integrations.Slack.SigningKey = strings.TrimSpace(c.Integrations.Slack.SigningKey)
 	c.Integrations.Slack.Channel = strings.TrimSpace(c.Integrations.Slack.Channel)
 	c.Integrations.Slack.VerifyToken = strings.TrimSpace(c.Integrations.Slack.VerifyToken)
+	c.Integrations.Slack.TeamID = strings.TrimSpace(c.Integrations.Slack.TeamID)
 
 	c.APIEndpoint = strings.TrimSpace(c.APIEndpoint)
 	c.APIKey = strings.TrimSpace(c.APIKey)

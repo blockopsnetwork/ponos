@@ -747,6 +747,7 @@ func (b *Bot) buildPonosConfigPayload() map[string]any {
 				"signing_key":  b.config.Integrations.Slack.SigningKey,
 				"verify_token": b.config.Integrations.Slack.VerifyToken,
 				"channel":      b.config.Integrations.Slack.Channel,
+				"team_id":      b.config.Integrations.Slack.TeamID,
 			},
 			"telescope": map[string]any{
 				"project_id":          b.config.Integrations.Telescope.ProjectID,
@@ -797,6 +798,13 @@ func (b *Bot) trySyncConfig(ctx context.Context) error {
 	} else {
 		b.logger.Warn("Failed to reload ponos config before sync", "error", err)
 	}
+
+	b.logger.Info(
+		"Syncing ponos config to agent-core",
+		"config_path", b.config.ConfigPath,
+		"diagnostics_owner", b.config.Diagnostics.GitHub.Owner,
+		"diagnostics_repo", b.config.Diagnostics.GitHub.Repo,
+	)
 
 	requestData := map[string]any{
 		"message":      "Configuration sync",
