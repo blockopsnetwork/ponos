@@ -529,7 +529,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 			m.updateViewportContent()
 		case "tool_start":
-			m.loadingMsg = fmt.Sprintf("Executing %s...", msg.update.Tool)
+			m.loadingMsg = getToolContextualMessage(msg.update.Tool)
 			m.messages = append(m.messages, ChatMessage{
 				ID:        generateMessageID(),
 				Role:      "tool_header",
@@ -568,9 +568,9 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tool_result":
 			var statusMsg string
 			if msg.update.Success {
-				statusMsg = fmt.Sprintf("%s completed successfully", msg.update.Tool)
+				statusMsg = getToolCompletionMessage(msg.update.Tool, true)
 			} else {
-				statusMsg = fmt.Sprintf("%s failed", msg.update.Tool)
+				statusMsg = getToolCompletionMessage(msg.update.Tool, false)
 			}
 
 			m.loadingMsg = statusMsg
@@ -1165,6 +1165,18 @@ func getToolContextualMessage(toolName string) string {
 		"backup_current_state":      "Creating a backup of the current state...",
 		"rollback_changes":          "Rolling back to the previous configuration...",
 		"verify_upgrade_success":    "Verifying the upgrade completed successfully...",
+		"run_diagnostics":           "Running diagnostics to gather evidence...",
+		"slack_post_message":        "Sending an update to Slack...",
+		"telescope_node_status":     "Checking node health status...",
+		"telescope_sync_status":     "Checking sync status...",
+		"telescope_recent_errors":   "Collecting recent errors...",
+		"telescope_get_logs":        "Fetching component logs...",
+		"telescope_query_logs":      "Querying logs...",
+		"telescope_query_metrics":   "Querying metrics...",
+		"telescope_cpu_usage":       "Checking CPU usage...",
+		"telescope_memory_usage":    "Checking memory usage...",
+		"telescope_disk_usage":      "Checking disk usage...",
+		"telescope_network_usage":   "Checking network usage...",
 	}
 
 	if message, exists := contextMessages[toolName]; exists {
@@ -1189,6 +1201,18 @@ func getToolCompletionMessage(toolName string, success bool) string {
 			"backup_current_state":      "Current state backed up successfully",
 			"rollback_changes":          "Successfully rolled back to previous configuration",
 			"verify_upgrade_success":    "Upgrade verification completed successfully",
+			"run_diagnostics":           "Diagnostics completed successfully",
+			"slack_post_message":        "Slack update sent",
+			"telescope_node_status":     "Node health retrieved",
+			"telescope_sync_status":     "Sync status retrieved",
+			"telescope_recent_errors":   "Recent errors retrieved",
+			"telescope_get_logs":        "Logs retrieved",
+			"telescope_query_logs":      "Log query completed",
+			"telescope_query_metrics":   "Metric query completed",
+			"telescope_cpu_usage":       "CPU usage retrieved",
+			"telescope_memory_usage":    "Memory usage retrieved",
+			"telescope_disk_usage":      "Disk usage retrieved",
+			"telescope_network_usage":   "Network usage retrieved",
 		}
 
 		if message, exists := successMessages[toolName]; exists {
@@ -1210,6 +1234,18 @@ func getToolCompletionMessage(toolName string, success bool) string {
 			"backup_current_state":      "Failed to backup current state",
 			"rollback_changes":          "Failed to rollback changes",
 			"verify_upgrade_success":    "Upgrade verification failed",
+			"run_diagnostics":           "Diagnostics failed",
+			"slack_post_message":        "Failed to send Slack update",
+			"telescope_node_status":     "Failed to retrieve node health",
+			"telescope_sync_status":     "Failed to retrieve sync status",
+			"telescope_recent_errors":   "Failed to retrieve recent errors",
+			"telescope_get_logs":        "Failed to retrieve logs",
+			"telescope_query_logs":      "Log query failed",
+			"telescope_query_metrics":   "Metric query failed",
+			"telescope_cpu_usage":       "Failed to retrieve CPU usage",
+			"telescope_memory_usage":    "Failed to retrieve memory usage",
+			"telescope_disk_usage":      "Failed to retrieve disk usage",
+			"telescope_network_usage":   "Failed to retrieve network usage",
 		}
 
 		if message, exists := failureMessages[toolName]; exists {
