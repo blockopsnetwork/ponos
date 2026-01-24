@@ -1,11 +1,9 @@
 # Table of contents
 
-* [Introduction](README.md)
+## Getting Started
 
-## Get Started
-
-* [What is NodeOperator.ai?](get-started/what-is-nodeoperator.md)
-* [Comparison](get-started/comparison.md)
+* [Introduction](get-started/Introduction.md)
+* [Ponos vs Coding Agents](get-started/comparison.md)
 * [Install Ponos](get-started/install-ponos.md)
   * [Installation on Linux](get-started/install-ponos/linux.md)
   * [Installation on macOS](get-started/install-ponos/macos.md)
