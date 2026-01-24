@@ -1,5 +1,10 @@
+---
+description: About Nodeoperator AI
+---
 
-Nodeoperator AI is an autonomous node operator agent that deploys, manages, and remediates issues with blockchain infrastructure using GitOps as a human-in-the-loop control model. 
+# What is Nodeoperator AI?
+
+Nodeoperator AI is an autonomous node operator agent that deploys, manages, and remediates issues with blockchain infrastructure using GitOps as a human-in-the-loop control model.
 
 ## Why an AI Node Operator?
 Running blockchain infrastructure today is manual, fragile, and error-prone. Nodeoperators and Solo Stakers:
@@ -10,14 +15,14 @@ Running blockchain infrastructure today is manual, fragile, and error-prone. Nod
 
 Nodeoperator AI is designed to reduce this operational burden while keeping humans in control.
 
-## Is AI safe for critical infrastructure?
+## Is AI agent safe for critical infrastructure?
 We recognize the concerns about placing critical infrastructure under the control of an AI agent: 
 
-"Is AI ready? Can it be trusted with critical infra? What about hallucinations and unpredictable execution?. Is this just jumping on another shining new AI tool?" 
+<quote> "Is AI ready? Can it be trusted with critical infra? What about hallucinations and unpredictable execution?. Is this just jumping on another shining new AI tool?" </quote>
 
-These questions are valid and they must be addressed head-on.
+These questions are valid and we addressed them head on
 
-NodeOperator.ai is built on a constraint-driven model, not open-ended automation:
+Nodeoperator AI is built on a constraint-driven model, not open-ended automation:
 
 - Actions follow deterministic workflows
 - Operational boundaries are explicitly defined
@@ -25,20 +30,21 @@ NodeOperator.ai is built on a constraint-driven model, not open-ended automation
 - The agent uses domain-specific infrastructure knowledge
 - Human approval remains part of the control loop
 
-When sandboxed, scoped, and supervised, AI agents can reduce human error and execute repetitive operational tasks with higher consistency than manual workflows
+When sandboxed, scoped, and supervised, AI agents can reduce human error and execute repetitive operational tasks with higher consistency than manual workflows.
 
+## System Architecture
 
-# System Architecture
 Nodeoperator AI is built as modular services:
 
 ### Interfaces
+
 Where operators interact with the system. Designed to fit existing workflows rather than forcing a chat-only model.
 
 #### Ponos
-**Ponos** is the command interface for NodeOperator.ai.
 
-> Ponos (Greek: Πόνος) means *toil*, *labor*, or *sustained effort*.
-> Ponos takes on that toil for node operators.
+**Ponos** is the command interface for Nodeoperator AI.
+
+> Ponos (Greek: Πόνος) means *toil*, *labor*, or *sustained effort*. Ponos takes on that toil for node operators.
 
 **Available today:**
 
@@ -64,7 +70,6 @@ Where operators interact with the system. Designed to fit existing workflows rat
 - **GitHub Actions** — Trigger workflows from CI/CD pipelines
 - **GitHub Comments** — Operate via PR/issue comments
 - **Discord** — Community and team workflows
-
 
 ### Agent Core (Backend)
 This is the agent's decision engine, where context logic, safety guardrails, and operational intelligence are enforced.
@@ -95,7 +100,7 @@ MCP (Model Context Protocol) servers are modular connectors to external systems.
 
 All MCP servers are open source: https://github.com/blockopsnetwork/mcp-servers
 
-# Core Workflows & Capabilities
+## Core Workflows & Capabilities
 
 Ponos supports three core workflows:
 
