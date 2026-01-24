@@ -1,7 +1,3 @@
----
-description: About Nodeoperator AI
----
-
 # Introduction
 
 Nodeoperator AI is an autonomous node operator agent that deploys, manages, and remediates issues with blockchain infrastructure using GitOps as a human-in-the-loop control model.
