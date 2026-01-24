@@ -4,12 +4,19 @@ Nodeoperator AI is an autonomous node operator agent that deploys, manages, and 
 
 ## Why an AI Node Operator?
 
-Running blockchain infrastructure today is manual, fragile, and error-prone. Nodeoperators and Solo Stakers:
+Running blockchain infrastructure is manual, fragile, and error-prone. It’s not just “running a server”, it’s continuous operational work.
 
-* Manually Track upstream client releases
-* Perform risky upgrades
-* Debug failing nodes under time pressure
-* Maintain complex Kubernetes environments
+Protocol teams spend significant time documenting their systems (often poorly), then hand-holding early operators through node setup process. Even with managed infrastructure providers lowering the entry barrier, professional operators and solo stakers are still responsible for keeping nodes online 24/7 with high reliability
+
+The day-to-day reality of managing blockchain nodes looks like this:
+* Missing critical client upgrades and security releases
+* High-risk manual upgrades with error-prone configuration changes 
+* Alerts that fire without clear root cause
+* Metrics and Logs Dashboard that lacks actionable signal
+* Manual correlation of logs, metrics, and cluster state during incidents
+* Repeating the same operational procedures across nodes and networks
+
+Most failures are not protocol flaws, they are operational mistakes.
 
 Nodeoperator AI is designed to reduce this operational burden while keeping humans in control.
 
