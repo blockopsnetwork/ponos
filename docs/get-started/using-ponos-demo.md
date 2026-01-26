@@ -17,7 +17,6 @@ Add this to your `ponos.yml` under `projects`:
 ```yaml
 version: 1
 
-prod
 api_endpoint: "https://api.nodeoperator.ai"
 api_key: "nai-*******"
 
@@ -38,7 +37,7 @@ Below is a sample `ponos.yml` used for the demo, with secrets redacted:
 ```yaml
 version: 1
 
-prod
+
 api_endpoint: "https://api.nodeoperator.ai"
 api_key: "nai-*******"
 
