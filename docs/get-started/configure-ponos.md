@@ -20,13 +20,19 @@ Ponos uses an API key to authenticate with the NodeOperator backend.
 
 <figure><img src="../.gitbook/assets/Screenshot 2026-01-26 at 08.28.45.png" alt=""><figcaption></figcaption></figure>
 
+This is the NodeOperator login screen where you start the magic-link flow.
+
 2. Provide your email and a Magic link will be sent to you
 
 <figure><img src="../.gitbook/assets/Screenshot 2026-01-26 at 08.34.59.png" alt=""><figcaption></figcaption></figure>
 
+Enter your email and use the link in your inbox to sign in.
+
 3. Create or copy your API key
 
 <figure><img src="../.gitbook/assets/Screenshot 2026-01-26 at 08.36.13.png" alt=""><figcaption></figcaption></figure>
+
+Copy the API key shown here and keep it safe. You will paste it into `ponos.yml`.
 
 4. Add it to your `ponos.yml` as `api_key`
 
