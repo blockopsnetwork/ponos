@@ -98,6 +98,26 @@ projects:
       - "deployments/ethereum.yaml"
 ```
 
+### Example with Playground repo
+
+This repo is public and includes an example manifest you can test against:
+
+https://github.com/blockopsnetwork/playground
+
+
+Example config using that path:
+
+```yaml
+projects:
+  - network: "ethereum"
+    project_name: "hoodi"
+    owner: "blockopsnetwork"
+    name: "playground"
+    branch: "main"
+    paths:
+      - "ethereum/ethereum-hoodi.yaml"
+```
+
 ## Node Observability & Incident Management
 
 Use this section if you want diagnostics, logs, and metrics-driven analysis.
@@ -129,7 +149,7 @@ Diagnostics is disabled by default. It only runs when `diagnostics.enabled` is s
 
 ```yaml
 diagnostics:
-  enabled: false
+  enabled: true
   provider: "telescope"
   github:
     owner: "your-org"
