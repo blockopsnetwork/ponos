@@ -4,14 +4,11 @@ description: A working demo setup using the public Playground repo.
 
 # Using Ponos (demo)
 
-This demo uses the public Playground repo so you can test upgrades and
-diagnostics without wiring a private repository.
+This demo uses the public Playground repo so you can test upgrades and diagnostics without wiring a private repository.
 
-Repository:
-https://github.com/blockopsnetwork/playground
+Repository: https://github.com/blockopsnetwork/playground
 
-Example manifest used in this demo:
-https://github.com/blockopsnetwork/playground/blob/main/ethereum/ethereum-hoodi.yaml
+Example manifest used in this demo: https://github.com/blockopsnetwork/playground/blob/main/ethereum/ethereum-hoodi.yaml
 
 ## Example config
 
@@ -28,8 +25,6 @@ projects:
       - "ethereum/ethereum-hoodi.yaml"
 ```
 
-## Demo video
+## Demo video (Upgrade & Config Management Workflow)
 
-<figure><img src="../.gitbook/assets/ponos-demo-placeholder.png" alt=""><figcaption>Upgrade + diagnostics walkthrough</figcaption></figure>
-
-Replace the placeholder with your recorded demo.
+{% embed url="https://youtu.be/dfi_1cAbCbk" %}
