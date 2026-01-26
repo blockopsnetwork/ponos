@@ -10,7 +10,7 @@ Repository: https://github.com/blockopsnetwork/playground
 
 Example manifest used in this demo: https://github.com/blockopsnetwork/playground/blob/main/ethereum/ethereum-hoodi.yaml
 
-## Example config
+## Sample config (Upgrade Workflow)
 
 Add this to your `ponos.yml` under `projects`:
 
