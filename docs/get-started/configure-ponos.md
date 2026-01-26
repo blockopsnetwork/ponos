@@ -6,9 +6,9 @@ description: Create a ponos.yml and set required integrations.
 
 Ponos reads configuration from `ponos.yml`. By default it looks for the file in:
 
-1) `./ponos.yml` (current directory)  
-2) `~/.config/ponos/ponos.yml`  
-3) `/etc/ponos/ponos.yml`
+1. `./ponos.yml` (current directory)
+2. `~/.config/ponos/ponos.yml`
+3. `/etc/ponos/ponos.yml`
 
 You can override the path with `PONOS_CONFIG_PATH`.
 
@@ -16,9 +16,19 @@ You can override the path with `PONOS_CONFIG_PATH`.
 
 Ponos uses an API key to authenticate with the NodeOperator backend.
 
-1) Go to `https://platform.nodeoperator.ai/`  
-2) Create or copy your API key  
-3) Add it to your `ponos.yml` as `api_key`
+1. Go to `https://platform.nodeoperator.ai/`
+
+<figure><img src="../.gitbook/assets/Screenshot 2026-01-26 at 08.28.45.png" alt=""><figcaption></figcaption></figure>
+
+1. Provide your email and a Magic link will be sent to you
+
+<figure><img src="../.gitbook/assets/Screenshot 2026-01-26 at 08.34.59.png" alt=""><figcaption></figcaption></figure>
+
+1. Create or copy your API key
+
+<figure><img src="../.gitbook/assets/Screenshot 2026-01-26 at 08.36.13.png" alt=""><figcaption></figcaption></figure>
+
+1. Add it to your `ponos.yml` as `api_key`
 
 ## Create a config file
 
@@ -32,10 +42,10 @@ cp ponos.yml.example ponos.yml
 
 At minimum, set:
 
-- `api_endpoint` (Nodeoperator API base URL)
-- `api_key` (from https://platform.nodeoperator.ai/)
-- GitHub auth (PAT or GitHub App)
-- Slack bot token + signing secret
+* `api_endpoint` (Nodeoperator API base URL)
+* `api_key` (from https://platform.nodeoperator.ai/)
+* GitHub auth (PAT or GitHub App)
+* Slack bot token + signing secret
 
 Example (minimal):
 

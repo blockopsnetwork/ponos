@@ -2,7 +2,7 @@
 description: Install Ponos on Linux.
 ---
 
-# Install on Linux
+# Installation on Linux
 
 ## Quick install (recommended)
 
@@ -16,10 +16,9 @@ This installs the `ponos` binary.
 
 Prereqs:
 
-- Go (1.20+)
-- Git
-- Make
-
+* Go (1.20+)
+* Git
+* Make
 
 ```bash
 git clone https://github.com/blockops-sh/ponos
@@ -33,8 +32,8 @@ The binary is produced at `./bin/ponos`.
 
 Pick the correct asset for your CPU:
 
-- `ponos_Linux_x86_64.tar.gz` (amd64)
-- `ponos_Linux_arm64.tar.gz` (arm64)
+* `ponos_Linux_x86_64.tar.gz` (amd64)
+* `ponos_Linux_arm64.tar.gz` (arm64)
 
 Replace `vX.Y.Z` with a real tag from the GitHub releases page.
 
@@ -60,7 +59,7 @@ which ponos
 ponos
 ```
 
-Next: [Configure Ponos](../configure-ponos.md).
+<figure><img src="../../.gitbook/assets/Screenshot 2026-01-26 at 08.25.04.png" alt=""><figcaption></figcaption></figure>
 
 ## Upgrade Ponos
 
