@@ -59,9 +59,9 @@ which ponos
 ponos
 ```
 
-<figure><img src="../../.gitbook/assets/Screenshot 2026-01-26 at 08.25.04.png" alt=""><figcaption></figcaption></figure>
+This is the Ponos TUI after launch. You can begin prompting the agent here
 
-This is the Ponos TUI after launch. You can type natural‑language prompts here.
+<figure><img src="../../.gitbook/assets/Screenshot 2026-01-26 at 08.25.04.png" alt=""><figcaption></figcaption></figure>
 
 ## Upgrade Ponos
 

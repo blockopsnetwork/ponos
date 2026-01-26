@@ -50,10 +50,10 @@ This section is required for upgrade workflows and GitOps PR creation.
 
 At minimum, set:
 
-- `api_endpoint` (NodeOperator API base URL)
-- `api_key` (from https://platform.nodeoperator.ai/)
-- GitHub auth (PAT or GitHub App)
-- Slack bot token + signing secret
+* `api_endpoint` (NodeOperator API base URL)
+* `api_key` (from https://platform.nodeoperator.ai/)
+* GitHub auth (PAT or GitHub App)
+* Slack bot token + signing secret
 
 Minimal example:
 
@@ -79,12 +79,11 @@ integrations:
     channel: "sre-tasks"
 ```
 
-Once you save `ponos.yml`, restart Ponos. To verify the TUI is connected to
-the API, send a simple prompt like “hello.” You should see a response like this:
+Once you save `ponos.yml`, restart Ponos. To verify the TUI is connected to the API, send a simple prompt like “hello.” You should see a response like this:
 
 <figure><img src="../.gitbook/assets/Screenshot 2026-01-26 at 10.19.46.png" alt=""><figcaption></figcaption></figure>
 
-## Projects (for GitHub updates)
+## Projects (Release Workflow)
 
 Projects map networks to repos and file paths that Ponos can update:
 
@@ -103,17 +102,13 @@ projects:
 
 Use this section if you want diagnostics, logs, and metrics-driven analysis.
 
-### Telescope (Prometheus/Loki)
+### Telescope (automatic monitoring for any blockchain)
 
-Telescope is an all‑in‑one observability tool for blockchain nodes. It removes
-the need to hand‑maintain separate scrape configs for each component by setting
-up metrics and logs automatically based on the network you run.
+Telescope is an all‑in‑one observability tool for blockchain nodes. It removes the need to hand‑maintain separate scrape configs for each component by setting up metrics and logs automatically based on the network you run.
 
-Open source: https://github.com/blockopsnetwork/telescope
+You can read more about the project here: [https://github.com/blockopsnetwork/telescope](https://github.com/blockopsnetwork/telescope)&#x20;
 
-If you already run Prometheus and Loki, point Ponos at your own endpoints here.
-Make sure your metrics and logs are labeled with `project_id` or `project_name`
-so Telescope can scope queries correctly.
+If you already run Prometheus and Loki, point Ponos at your own endpoints here. Make sure your metrics and logs are labeled with `project_id` or `project_name` so Telescope can scope queries correctly.
 
 ```yaml
 integrations:
@@ -130,8 +125,7 @@ integrations:
 
 ### Diagnostics
 
-Diagnostics is disabled by default. It only runs when `diagnostics.enabled` is
-set to `true`. The provider can be `telescope` or `kubernetes`.
+Diagnostics is disabled by default. It only runs when `diagnostics.enabled` is set to `true`. The provider can be `telescope` or `kubernetes`.
 
 ```yaml
 diagnostics:
@@ -153,9 +147,7 @@ diagnostics:
 
 ## Automatic client updates (optional)
 
-Ponos can listen for release webhooks and create upgrade PRs automatically. This
-is off by default and only runs when the server is started with the release
-listener enabled.
+Ponos can listen for release webhooks and create upgrade PRs automatically. This is off by default and only runs when the server is started with the release listener enabled.
 
 In `ponos.yml`:
 
