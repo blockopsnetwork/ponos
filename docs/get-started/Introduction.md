@@ -48,11 +48,8 @@ Where operators interact with the system. Designed to fit existing workflows rat
 |-----------|----------|
 | **TUI** | Interactive terminal UI with workflow progress cards, real-time logs, and natural language input |
 | **Slack** | Chat interface for team workflows via natural language, slash commands, and threaded conversations |
-| **CLI** | Scriptable commands for automation and CI/CD integration |
 
 **TUI Features:**
-- Workflow cards showing real-time progress percentage
-- Status badges (pending → in progress → awaiting approval → complete)
 - Natural language command input
 - Session history and resume capability
 
@@ -73,7 +70,7 @@ This is the agent's decision engine, where context logic, safety guardrails, and
 
 - **Workflow orchestration** — Manages multi-step operations with checkpoints and rollback capability
 - **Session management** — Maintains conversation context and execution state across interactions
-- **LLM integration** — Supports Claude, GPT-4, Gemini, and other models with streaming responses
+- **LLM integration** — Supports Claude and GPT-4 with streaming responses
 - **Safety guardrails** — Validates actions against operational rules before execution
 - **Rulebook engine** — Applies team-defined playbooks and constraints to agent decisions
 - **Memory system** — Stores and retrieves operational knowledge for context-aware responses
@@ -111,7 +108,6 @@ Upgrade blockchain clients and infrastructure components with automated changelo
   - Analyzes changelogs and identifies breaking changes
   - Compares current vs target versions
   - Generates upgrade PR with AI-summarized release notes
-  - Runs pre-flight compatibility checks
 
 **Example prompts:**
 - "Upgrade mainnet Geth to the latest version"
@@ -134,19 +130,6 @@ Investigate node failures using logs, metrics, and cluster state to determine ro
 - "Check why Geth pods are failing on testnet"
 - "Investigate high attestation miss rate on validator-01"
 
-### 3. Deploy Workflow
-
-Deploy new nodes or update configurations via GitOps.
-
-- **What it does**:
-  - Validates Kubernetes manifests
-  - Creates deployment PRs with change diffs
-  - Monitors rollout progress
-  - Runs post-deployment health checks
-
-**Example prompts:**
-- "Deploy a new Lighthouse beacon node on mainnet"
-- "Update validator count to 10 on holesky cluster"
 
 ## Features
 
@@ -175,7 +158,7 @@ Describe what you want in plain English. The agent interprets your intent and ex
 The agent remembers conversation context. Follow-up questions like "now do the same for testnet" work without repeating the full context.
 
 **Multi-Model Support**
-Works with Claude, GPT-4, and other LLMs. Choose the model that fits your needs and budget.
+Works with Claude and GPT-4. Choose the model that fits your needs and budget.
 
 ### Operational Safety
 

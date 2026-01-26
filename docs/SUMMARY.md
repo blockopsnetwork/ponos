@@ -2,7 +2,7 @@
 
 ## Getting Started
 
-* [Introduction](README.md)
+* [Introduction](get-started/Introduction.md)
 * [Ponos vs Coding Agents](get-started/comparison.md)
 * [Install Ponos](get-started/install-ponos.md)
   * [Installation on Linux](get-started/install-ponos/linux.md)
