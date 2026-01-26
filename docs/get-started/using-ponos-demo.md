@@ -6,11 +6,9 @@ description: Demo setup using the public Playground repo.
 
 This page shows a sample demo setup using the public repo to represent an ideal infrastructire-as-code repository and how nodeoperator agent interacts with it, so you can test deploy, upgrade and diagnostics workflows without wiring a private repository.
 
-Repository:
-https://github.com/blockopsnetwork/playground
+Repository: https://github.com/blockopsnetwork/playground
 
-Example manifest used in this demo:
-https://github.com/blockopsnetwork/playground/blob/main/ethereum/ethereum-hoodi.yaml
+Example manifest used in this demo: https://github.com/blockopsnetwork/playground/blob/main/ethereum/ethereum-hoodi.yaml
 
 ## Upgrade demo
 
@@ -29,28 +27,24 @@ projects:
 
 Example prompts:
 
-- "Upgrade ethereum hoodi to the latest version"
-- "Show me available Geth versions for hoodi"
+* "Upgrade ethereum hoodi to the latest version"
+* "Show me available Geth versions for hoodi"
 
 ### Upgrade demo video
 
-<figure><img src="../.gitbook/assets/ponos-demo-upgrade-placeholder.png" alt=""><figcaption>Upgrade walkthrough</figcaption></figure>
-
-Replace the placeholder with your recorded upgrade demo.
+{% embed url="https://youtu.be/dfi_1cAbCbk" %}
 
 ## Diagnostics demo
 
-Diagnostics only run when enabled in `ponos.yml` and the provider is set to
-`telescope` or `kubernetes`.
+Diagnostics only run when enabled in `ponos.yml` and the provider is set to `telescope` or `kubernetes`.
 
 Example prompts:
 
-- "Diagnose mainnet Ethereum nodes"
-- "Check why Geth pods are failing on testnet"
+* "Diagnose mainnet Ethereum nodes"
+* "Check why Geth pods are failing on testnet"
 
-### Diagnostics demo video
+{% embed url="https://youtu.be/BopV6C_kHNQ" %}
 
-<figure><img src="../.gitbook/assets/ponos-demo-diagnostics-placeholder.png" alt=""><figcaption>Diagnostics walkthrough</figcaption></figure>
 
 
 ## Ponos.yml config (Diagnostic)
