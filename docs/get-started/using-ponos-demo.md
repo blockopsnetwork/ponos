@@ -15,6 +15,12 @@ Example manifest used in this demo: https://github.com/blockopsnetwork/playgroun
 Add this to your `ponos.yml` under `projects`:
 
 ```yaml
+version: 1
+
+prod
+api_endpoint: "https://api.nodeoperator.ai"
+api_key: "nai-*******"
+
 projects:
   - network: "ethereum"
     project_name: "hoodi"
@@ -42,7 +48,7 @@ integrations:
 
   slack:
     token: "xoxb-*****"
-    signing_key: "*****REDACTED*****"
+    signing_key: "*******"
 
   telescope:
     project_id: "random-number"
@@ -63,7 +69,7 @@ diagnostics:
   slack:
     channel: "sre-tasks"
   monitoring:
-    service: "lively-elisabetta"
+    service: "<project-name>"
     log_tail: 10
     eval_interval: 2
 
