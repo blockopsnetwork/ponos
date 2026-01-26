@@ -48,10 +48,10 @@ tar -xzf ponos.tar.gz
 sudo mv ponos /usr/local/bin/ponos
 ```
 
-Verify:
+Verify the binary is on your PATH:
 
 ```bash
-ponos
+which ponos
 ```
 
 ## Run the TUI
