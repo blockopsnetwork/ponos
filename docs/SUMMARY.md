@@ -7,8 +7,6 @@
 * [Install Ponos](get-started/install-ponos.md)
   * [Installation on Linux](get-started/install-ponos/linux.md)
   * [Installation on macOS](get-started/install-ponos/macos.md)
-  * [Docker](get-started/install-ponos/docker.md)
-* [Get Your API Key](get-started/get-api-key.md)
 * [Configure Ponos](get-started/configure-ponos.md)
 
 ## How It Works

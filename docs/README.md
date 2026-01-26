@@ -4,9 +4,7 @@ Nodeoperator AI is an autonomous node operator agent that deploys, manages, and 
 
 ## Why an AI Node Operator?
 
-Running blockchain infrastructure is manual, fragile, and error-prone. It’s not just “running a server”, it’s continuous operational work.
-
-Protocol teams spend significant time documenting their systems (often poorly), then hand-holding early operators through node setup process. Even with managed infrastructure providers lowering the entry barrier, professional operators and solo stakers are still responsible for keeping nodes online 24/7 with high reliability
+Running blockchain infrastructure is manual, fragile, and error-prone. Protocol teams spend significant time documenting their systems (often poorly), then hand-holding early operators through node setup process. Even with managed infrastructure providers lowering the entry barrier, professional operators and solo stakers are still responsible for keeping nodes online 24/7 with high reliability
 
 The day-to-day reality of managing blockchain nodes looks like this:
 * Missing critical client upgrades and security releases
