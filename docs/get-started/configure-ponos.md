@@ -77,6 +77,10 @@ integrations:
     channel: "sre-tasks"
 ```
 
+Once you have configured your ponons.yml config, you can save and restart ponos. To confirm that your ponos tui is connected to the api endpoint successfuly, you can simply prompt with any simple "Hello" prompt, if everything works fine, you should see a response from the LLM like this:
+
+<figure><img src="../.gitbook/assets/Screenshot 2026-01-26 at 10.19.46.png" alt=""><figcaption></figcaption></figure>
+
 ## Optional: Telescope observability
 
 Add this if you want metrics and logs via Telescope (Prometheus/Loki):
