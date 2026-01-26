@@ -25,6 +25,70 @@ projects:
       - "ethereum/ethereum-hoodi.yaml"
 ```
 
-## Demo video (Upgrade & Config Management Workflow)
+## Sample config (Diagnostic Workflow)
 
-{% embed url="https://youtu.be/dfi_1cAbCbk" %}
+Below is a sample `ponos.yml` used for the demo, with secrets redacted:
+
+```yaml
+version: 1
+
+prod
+api_endpoint: "https://api.nodeoperator.ai"
+api_key: "nai-*******"
+
+integrations:
+  github:
+    token: "ghp_*******"
+
+  slack:
+    token: "xoxb-*****"
+    signing_key: "*****REDACTED*****"
+
+  telescope:
+    project_id: "random-number"
+    project_name: "random-name"
+    prometheus_url: "https://prometheus-datasource_url"
+    prometheus_username: "prometheus_username"
+    prometheus_password: "******"
+    loki_url: "https://loki.datasource_url"
+    loki_username: "loki_username"
+    loki_password: "*****"
+
+diagnostics:
+  enabled: true
+  provider: telescope
+  github:
+    owner: "blockopsnetwork"
+    repo: "playground"
+  slack:
+    channel: "sre-tasks"
+  monitoring:
+    service: "lively-elisabetta"
+    log_tail: 10
+    eval_interval: 2
+
+server:
+  port: "8080"
+  enable_release_listener: false
+
+projects:
+  - network: ethereum
+    owner: blockopsnetwork
+    project_name: ethereum-hoodi-fullnode
+    name: playground
+    branch: main
+    paths:
+      - ethereum/ethereum-hoodi.yaml
+```
+
+## Diagnostics demo
+
+This assumes diagnostics are enabled in `ponos.yml` and the provider is set to
+`telescope` or `kubernetes` (see Configure Ponos).
+
+Example prompts:
+
+- "Diagnose mainnet Ethereum nodes"
+- "Check why Geth pods are failing on testnet"
+
+## Diagnostics demo video
