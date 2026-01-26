@@ -44,16 +44,18 @@ Copy the example config:
 cp ponos.yml.example ponos.yml
 ```
 
-## Required settings
+## Configuring Ponos for Client Updates and Management
+
+This section is required for upgrade workflows and GitOps PR creation.
 
 At minimum, set:
 
-* `api_endpoint` (Nodeoperator API base URL)
+* `api_endpoint` (NodeOperator API base URL)
 * `api_key` (from https://platform.nodeoperator.ai/)
 * GitHub auth (PAT or GitHub App)
 * Slack bot token + signing secret
 
-Example (minimal):
+Minimal example:
 
 ```yaml
 version: 1
@@ -77,9 +79,36 @@ integrations:
     channel: "sre-tasks"
 ```
 
-## Optional: Telescope observability
+Once you save `ponos.yml`, restart Ponos. To verify the TUI is connected to the API, send a simple prompt like “hello.” You should see a response like this:
 
-Add this if you want metrics and logs via Telescope (Prometheus/Loki):
+<figure><img src="../.gitbook/assets/Screenshot 2026-01-26 at 10.19.46.png" alt=""><figcaption></figcaption></figure>
+
+## Projects (Release Workflow)
+
+Projects map networks to repos and file paths that Ponos can update:
+
+```yaml
+projects:
+  - network: "ethereum"
+    project_name: "mainnet"
+    owner: "your-org"
+    name: "infra-repo"
+    branch: "main"
+    paths:
+      - "deployments/ethereum.yaml"
+```
+
+## Node Observability & Incident Management
+
+Use this section if you want diagnostics, logs, and metrics-driven analysis.
+
+### Telescope (automatic monitoring for any blockchain)
+
+Telescope is an all‑in‑one observability tool for blockchain nodes. It removes the need to hand‑maintain separate scrape configs for each component by setting up metrics and logs automatically based on the network you run.
+
+You can read more about the project here: [https://github.com/blockopsnetwork/telescope](https://github.com/blockopsnetwork/telescope)&#x20;
+
+If you already run Prometheus and Loki, point Ponos at your own endpoints here. Make sure your metrics and logs are labeled with `project_id` or `project_name` so Telescope can scope queries correctly.
 
 ```yaml
 integrations:
@@ -94,9 +123,9 @@ integrations:
     loki_password: ""
 ```
 
-## Optional: Diagnostics
+### Diagnostics
 
-Diagnostics uses either `telescope` or `kubernetes` as the provider.
+Diagnostics is disabled by default. It only runs when `diagnostics.enabled` is set to `true`. The provider can be `telescope` or `kubernetes`.
 
 ```yaml
 diagnostics:
@@ -116,19 +145,21 @@ diagnostics:
     eval_interval: 2
 ```
 
-## Projects (for GitHub updates)
+## Automatic client updates (optional)
 
-Projects map networks to repos and file paths that Ponos can update:
+Ponos can listen for release webhooks and create upgrade PRs automatically. This is off by default and only runs when the server is started with the release listener enabled.
+
+In `ponos.yml`:
 
 ```yaml
-projects:
-  - network: "ethereum"
-    project_name: "mainnet"
-    owner: "your-org"
-    name: "infra-repo"
-    branch: "main"
-    paths:
-      - "deployments/ethereum.yaml"
+server:
+  enable_release_listener: true
+```
+
+And set the env var before starting the server:
+
+```bash
+export ENABLE_RELEASE_LISTENER=true
 ```
 
 ## Next step
