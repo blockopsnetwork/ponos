@@ -1,63 +1,91 @@
 ---
-description: A working demo setup using the public Playground repo.
+description: Demo setup using the public Playground repo.
 ---
 
 # Using Ponos (demo)
 
-This demo uses the public Playground repo so you can test upgrades and diagnostics without wiring a private repository.
+This page shows a sample demo setup using the public repo to represent an ideal infrastructire-as-code repository and how nodeoperator agent interacts with it, so you can test deploy, upgrade and diagnostics workflows without wiring a private repository.
 
-Repository: https://github.com/blockopsnetwork/playground
+Repository:
+https://github.com/blockopsnetwork/playground
 
-Example manifest used in this demo: https://github.com/blockopsnetwork/playground/blob/main/ethereum/ethereum-hoodi.yaml
+Example manifest used in this demo:
+https://github.com/blockopsnetwork/playground/blob/main/ethereum/ethereum-hoodi.yaml
 
-## Sample config (Upgrade Workflow)
+## Upgrade demo
 
 Add this to your `ponos.yml` under `projects`:
 
 ```yaml
-version: 1
-
-api_endpoint: "https://api.nodeoperator.ai"
-api_key: "nai-*******"
-
 projects:
-  - network: "ethereum"
-    project_name: "hoodi"
-    owner: "blockopsnetwork"
-    name: "playground"
-    branch: "main"
+  - network: ethereum
+    project_name: ethereum-hoodi-fullnode
+    owner: blockopsnetwork
+    name: playground
+    branch: main
     paths:
-      - "ethereum/ethereum-hoodi.yaml"
+      - ethereum/ethereum-hoodi.yaml
 ```
 
-## Sample config (Diagnostic Workflow)
+Example prompts:
 
-Below is a sample `ponos.yml` used for the demo, with secrets redacted:
+- "Upgrade ethereum hoodi to the latest version"
+- "Show me available Geth versions for hoodi"
+
+### Upgrade demo video
+
+<figure><img src="../.gitbook/assets/ponos-demo-upgrade-placeholder.png" alt=""><figcaption>Upgrade walkthrough</figcaption></figure>
+
+Replace the placeholder with your recorded upgrade demo.
+
+## Diagnostics demo
+
+Diagnostics only run when enabled in `ponos.yml` and the provider is set to
+`telescope` or `kubernetes`.
+
+Example prompts:
+
+- "Diagnose mainnet Ethereum nodes"
+- "Check why Geth pods are failing on testnet"
+
+### Diagnostics demo video
+
+<figure><img src="../.gitbook/assets/ponos-demo-diagnostics-placeholder.png" alt=""><figcaption>Diagnostics walkthrough</figcaption></figure>
+
+
+## Ponos.yml config (Diagnostic)
+
+This is the full `ponos.yml` used in the demo, with secrets redacted:
 
 ```yaml
 version: 1
 
+# dev
+api_endpoint: "http://localhost:8001"
+api_key: "nai-REDACTED"
 
-api_endpoint: "https://api.nodeoperator.ai"
-api_key: "nai-*******"
+# prod
+# api_endpoint: "https://api.nodeoperator.ai"
+# api_key: "nai-REDACTED"
 
 integrations:
   github:
-    token: "ghp_*******"
+    token: "ghp_REDACTED"
 
   slack:
-    token: "xoxb-*****"
-    signing_key: "*******"
+    token: "xoxb-REDACTED"
+    team_id: "T016BSZRXPF"
+    signing_key: "REDACTED"
 
   telescope:
-    project_id: "random-number"
-    project_name: "random-name"
-    prometheus_url: "https://prometheus-datasource_url"
+    project_id: "random-id"
+    project_name: "rnadom-name"
+    prometheus_url: "<prometheus_datasource_url>"
     prometheus_username: "prometheus_username"
     prometheus_password: "******"
-    loki_url: "https://loki.datasource_url"
+    loki_url: "https://loki.<loki_datasource_url>"
     loki_username: "loki_username"
-    loki_password: "*****"
+    loki_password: "********"
 
 diagnostics:
   enabled: true
@@ -68,7 +96,7 @@ diagnostics:
   slack:
     channel: "sre-tasks"
   monitoring:
-    service: "<project-name>"
+    service: "lively-elisabetta"
     log_tail: 10
     eval_interval: 2
 
@@ -85,15 +113,3 @@ projects:
     paths:
       - ethereum/ethereum-hoodi.yaml
 ```
-
-## Diagnostics demo
-
-This assumes diagnostics are enabled in `ponos.yml` and the provider is set to
-`telescope` or `kubernetes` (see Configure Ponos).
-
-Example prompts:
-
-- "Diagnose mainnet Ethereum nodes"
-- "Check why Geth pods are failing on testnet"
-
-## Diagnostics demo video
