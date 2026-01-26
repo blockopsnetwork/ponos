@@ -8,6 +8,7 @@
   * [Installation on Linux](get-started/install-ponos/linux.md)
   * [Installation on macOS](get-started/install-ponos/macos.md)
 * [Configure Ponos](get-started/configure-ponos.md)
+* [Using Ponos (demo)](get-started/using-ponos-demo.md)
 
 ## How It Works
 

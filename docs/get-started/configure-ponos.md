@@ -129,7 +129,7 @@ Diagnostics is disabled by default. It only runs when `diagnostics.enabled` is s
 
 ```yaml
 diagnostics:
-  enabled: false
+  enabled: true
   provider: "telescope"
   github:
     owner: "your-org"
